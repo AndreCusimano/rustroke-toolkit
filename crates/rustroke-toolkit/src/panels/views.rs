@@ -3,7 +3,10 @@
 use std::collections::HashMap;
 
 use rtk_document::{NodeId, Project, WidgetKind};
-use rustroke::{Button, Icon, IconId, Id, Point, Rect, Response, Sense, Stroke, Tree, Ui, point};
+use rustroke::{
+    Button, Icon, IconId, Id, Point, Rect, Response, Sense, Stack, StackAlign, Stroke, Tree, Ui,
+    point,
+};
 
 use crate::app::{Dialog, DragPayload, Toolkit};
 
@@ -115,7 +118,7 @@ fn item(ui: &mut Ui<'_>, icon: IconId, text: &str) -> bool {
 
 pub fn show(ui: &mut Ui<'_>, app: &mut Toolkit) {
     let icons = app.icons();
-    ui.horizontal(|ui| {
+    Stack::row().align(StackAlign::Center).show(ui, |ui| {
         ui.add(Icon::new(icons.panel_views).size(20.0));
         ui.heading("Views");
         let new_view = Button::icon_only(icons.view_new).accessible_label("New view");

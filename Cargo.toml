@@ -3,7 +3,7 @@ resolver = "3"
 members = ["crates/*"]
 
 [workspace.package]
-version = "1.0.0"
+version = "2.0.0"
 edition = "2024"
 rust-version = "1.89"
 license = "MIT OR Apache-2.0"
@@ -15,7 +15,7 @@ rtk-preview = { path = "crates/rtk-preview" }
 
 # The toolkit's major version follows the rustroke version it targets
 # (keep `codegen::RUSTROKE_VERSION` in sync).
-rustroke = { version = "0.19.0", features = ["persistence"] }
+rustroke = { version = "0.20.0", features = ["persistence"] }
 syn = { version = "2", features = ["full", "extra-traits"] }
 proc-macro2 = { version = "1", features = ["span-locations"] }
 quote = "1"

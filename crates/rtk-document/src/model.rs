@@ -76,6 +76,7 @@ impl Node {
                 let first = self.text("code").lines().find(|l| !l.trim().is_empty());
                 format!("{name}: {}", first.unwrap_or("").trim())
             }
+            WidgetKind::Stack => format!("{name} ({})", self.text("direction")),
             _ => {
                 let text = ["text", "label"]
                     .iter()

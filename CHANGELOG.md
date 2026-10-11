@@ -6,6 +6,41 @@ targeted rustroke version.
 
 ## [Unreleased]
 
+## [2.0.0] — 2026-10-12
+
+For **rustroke 0.20** (built and tested with 0.20.0).
+
+- One Stack replaces the vertical, horizontal, centered and indented
+  layouts, containers and flex layouts, as in rustroke 0.20: a stack
+  without options is written with the short forms `ui.vertical(..)` /
+  `ui.horizontal(..)`, and `horizontal_wrapped`, `vertical_centered` and
+  `indent` are read as stacks. The component tree shows a stack's
+  direction.
+- Stacks: rows, columns and overlays
+  in a box (background, border, corner radius, shadow, padding, margin,
+  width and height that follow the content, fill the space or are fixed,
+  minimum and maximum size, clipping), with gap, wrapping, justification
+  and alignment; stack items with grow, shrink, basis, size limits and
+  their own alignment.
+- Grids gain column widths (`120, 1fr, auto`), cell alignment, the box
+  options and grid cells that span columns and rows, placed after the
+  previous cell or at a given column and row; they replace flex grids.
+- Charts: plots with line series (width, dashed or dotted, filled to a
+  baseline, markers, min/max marks), point series (marker shape, size),
+  horizontal and vertical reference lines, axis titles, legend, crosshair,
+  tooltip, pan and zoom; pie and donut charts. Series are bound to
+  `Vec<[f64; 2]>` fields, pies to `Vec<(String, f64)>`; the canvas shows
+  example data. A new Charts menu in the palette.
+- Views written for rustroke 0.19 are converted when read: `Container`,
+  `Flex`/`FlexItem` and `FlexGrid`/`GridCell` become stacks, stack items,
+  grids and grid cells; their imports go.
+- Optional on/off properties can be left unset (e.g. clipping, which
+  rustroke decides by default).
+- The toolkit's own interface is built with the new layouts too: the menu
+  bar, status bar, panel headers and palette items are stacks, and the
+  windows on the canvas are drawn with a `BoxStyle`.
+- The README picture shows the dashboard example.
+
 ## [1.0.0] — 2026-10-11
 
 First version, for **rustroke 0.19** (built and tested with 0.19.0).
@@ -58,5 +93,6 @@ First version, for **rustroke 0.19** (built and tested with 0.19.0).
 - Projects saved as a folder (`<view>.rs`, `mod.rs`, `rustroke-toolkit.ron`)
   with native folder dialogs; recent projects; unsaved-changes guard.
 
-[Unreleased]: https://github.com/AndreCusimano/rustroke-toolkit/compare/v1.0.0...HEAD
+[Unreleased]: https://github.com/AndreCusimano/rustroke-toolkit/compare/v2.0.0...HEAD
+[2.0.0]: https://github.com/AndreCusimano/rustroke-toolkit/releases/tag/v2.0.0
 [1.0.0]: https://github.com/AndreCusimano/rustroke-toolkit/releases/tag/v1.0.0

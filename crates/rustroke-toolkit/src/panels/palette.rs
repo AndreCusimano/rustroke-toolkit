@@ -5,7 +5,7 @@
 
 use rtk_document::{Category, WidgetKind};
 use rustroke::{
-    Align, CollapsingHeader, Icon, Id, Label, Layout, ScrollArea, SearchField, Sense, TextStyle, Ui,
+    CollapsingHeader, Icon, Id, Label, ScrollArea, SearchField, Sense, Sizing, Stack, TextStyle, Ui,
 };
 
 use crate::app::{DragPayload, Toolkit};
@@ -36,10 +36,10 @@ fn item(ui: &mut Ui<'_>, app: &mut Toolkit, icons: &Icons, kind: WidgetKind) {
     let width = ui.available_width();
     let mut clicked = false;
     ui.dnd_drag_source(Id::new(("palette", kind)), DragPayload::New(kind), |ui| {
-        let row = ui.with_layout(Layout::left_to_right(Align::Min), |ui| {
+        // Icon, then name over description, as wide as the panel.
+        let row = Stack::row().width(Sizing::Points(width)).show(ui, |ui| {
             ui.add(Icon::new(icons.kind(kind)).size(20.0));
-            ui.vertical(|ui| {
-                ui.style_mut().spacing.item_spacing.y = 1.0;
+            Stack::column().gap(1.0).show(ui, |ui| {
                 let name = style.body.clone().weight(600);
                 ui.add(Label::new(spec.name).style(name));
                 let small = TextStyle::proportional(12.0);
@@ -48,7 +48,6 @@ fn item(ui: &mut Ui<'_>, app: &mut Toolkit, icons: &Icons, kind: WidgetKind) {
         });
         // The whole row reacts to clicks (the drag source only drags).
         let rect = row.response.rect;
-        let rect = rustroke::Rect::from_min_size(rect.min, rustroke::vec2(width, rect.height()));
         let response = ui.interact(Id::new(("palette item", kind)), rect, Sense::CLICK);
         if response.hovered() {
             let accent = ui.style().visuals.accent.with_alpha(0.6);

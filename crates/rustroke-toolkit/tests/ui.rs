@@ -40,10 +40,10 @@ fn screenshot() {
     let shot = harness.render_software();
     shot.save_png(dir.join("toolkit-resizable.png")).unwrap();
 
-    // Panels inside a view, containers, size limits; a card selected.
+    // Panels inside a view, stacks, charts; the chart card selected.
     app.open_view(2);
     settle(&mut harness, &mut app);
-    let card = app.project.views[2].nodes[2].children[0].children[0].children[0].id;
+    let card = app.project.views[2].nodes[2].children[0].children[0].id;
     app.selected = Some(card);
     settle(&mut harness, &mut app);
     let shot = harness.render_software();
@@ -288,7 +288,7 @@ fn drag_from_the_palette_to_the_canvas() {
     let row = app.project.views[0]
         .nodes
         .iter()
-        .find(|n| n.kind == WidgetKind::Horizontal)
+        .find(|n| n.kind == WidgetKind::Stack && n.text("direction") == "row")
         .unwrap();
     let kinds: Vec<_> = row.children.iter().map(|n| n.kind).collect();
     assert_eq!(
@@ -338,13 +338,13 @@ fn drag_in_and_onto_the_tree() {
     let mut harness = harness();
     settle(&mut harness, &mut app);
     // Onto the middle of the "Horizontal" row: inside the row, at the end.
-    let row = in_tree(&harness, "Horizontal").center();
+    let row = in_tree(&harness, "Stack (row)").center();
     let from = center(&harness, "Spinner");
     drag(&mut harness, &mut app, from, row);
     let horizontal = app.project.views[0]
         .nodes
         .iter()
-        .find(|n| n.kind == WidgetKind::Horizontal)
+        .find(|n| n.kind == WidgetKind::Stack && n.text("direction") == "row")
         .unwrap();
     assert_eq!(
         horizontal.children.last().unwrap().kind,

@@ -5,8 +5,8 @@
 use rtk_document::WindowSettings;
 use rtk_preview::{DropMarker, Mode, show_view};
 use rustroke::{
-    Align, Color, Id, Layout, Point, Rect, ScrollArea, Sense, Shadow, Stroke, TextStyle, Ui, Vec2,
-    point, vec2,
+    Align, BoxStyle, Color, Id, Layout, Point, Rect, ScrollArea, Sense, Shadow, Stroke, TextStyle,
+    Ui, Vec2, point, vec2,
 };
 
 use crate::app::{DragPayload, Toolkit};
@@ -88,18 +88,22 @@ fn paint_window(ui: &mut Ui<'_>, origin: Point, window: &WindowSettings, selecte
         &TextStyle::proportional(13.0).weight(600),
         None,
     );
-    let painter = ui.painter();
-    painter.shadow(
-        frame,
-        radius,
-        Shadow {
+    let border = if selected {
+        Stroke::new(2.0, v.accent)
+    } else {
+        v.window_stroke
+    };
+    let window_box = BoxStyle::new()
+        .fill(v.background)
+        .corner_radius(radius)
+        .shadow(Shadow {
             offset: vec2(0.0, 8.0),
             blur: 24.0,
             spread: 0.0,
             color: Color::BLACK.with_alpha(0.45),
-        },
-    );
-    painter.rect_filled(frame, radius, v.background);
+        });
+    let painter = ui.painter();
+    window_box.paint(painter, frame);
     painter.rect_filled(title_bar, radius, v.panel_fill);
     // Square off the title bar's bottom corners.
     painter.rect_filled(
@@ -131,12 +135,11 @@ fn paint_window(ui: &mut Ui<'_>, origin: Point, window: &WindowSettings, selecte
         title_bar.center().y - title.size.y / 2.0,
     );
     painter.galley(title_pos, title, v.text);
-    let border = if selected {
-        Stroke::new(2.0, v.accent)
-    } else {
-        v.window_stroke
-    };
-    painter.rect_stroke(frame, radius, border);
+    // The border last, over the title bar.
+    BoxStyle::new()
+        .stroke(border)
+        .corner_radius(radius)
+        .paint(painter, frame);
     body
 }
 

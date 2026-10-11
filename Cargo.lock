@@ -2324,14 +2324,14 @@ dependencies = [
 
 [[package]]
 name = "rtk-codegen-check"
-version = "1.0.0"
+version = "2.0.0"
 dependencies = [
  "rustroke",
 ]
 
 [[package]]
 name = "rtk-document"
-version = "1.0.0"
+version = "2.0.0"
 dependencies = [
  "prettyplease",
  "proc-macro2",
@@ -2343,7 +2343,7 @@ dependencies = [
 
 [[package]]
 name = "rtk-preview"
-version = "1.0.0"
+version = "2.0.0"
 dependencies = [
  "rtk-document",
  "rustroke",
@@ -2398,9 +2398,9 @@ dependencies = [
 
 [[package]]
 name = "rustroke"
-version = "0.19.0"
+version = "0.20.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "2d8409e59add588b027617de07c825605adf118d59044a67b072ecc972977759"
+checksum = "01db05474f8e9df2b27d74e03fa5f047dbdd555213dafa031f47cb3376130754"
 dependencies = [
  "image",
  "rustroke-core",
@@ -2412,15 +2412,15 @@ dependencies = [
 
 [[package]]
 name = "rustroke-core"
-version = "0.19.0"
+version = "0.20.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "ffa95334589633e434635f9094a61ff70726b0490fd5089bf7b4245d37f8fda2"
+checksum = "c232803f46cb72f409fd1dc682f4f4fee22abef642d8d6d4de9e4b2aa1ad5a40"
 
 [[package]]
 name = "rustroke-render"
-version = "0.19.0"
+version = "0.20.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "fed463de1452748548d475ad43c24bd740a36b4b9de8b1767688e8de2a457029"
+checksum = "31c9834ca59ec7ff1cc927a4ad2fa9471786a2d64066e62141d0b0a378792aba"
 dependencies = [
  "bytemuck",
  "log",
@@ -2430,18 +2430,18 @@ dependencies = [
 
 [[package]]
 name = "rustroke-soft"
-version = "0.19.0"
+version = "0.20.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "88a021113b878c719bf393cf4dd1acc0cfcc2d9fe9c73e4bdc2caee8938d14f2"
+checksum = "6bb7463ade21fac4fc68dc0494353add6905f7edf8967d6c7bf458b377fd200c"
 dependencies = [
  "rustroke-core",
 ]
 
 [[package]]
 name = "rustroke-text"
-version = "0.19.0"
+version = "0.20.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "44baa4d1483b6725036d4a672687d7ad7b29cab496a93f81c3575b0f75d99ed7"
+checksum = "e2f63957d8b45d2b252c1c71b543937464a6837a0ff2b922ade2968954cd6681"
 dependencies = [
  "cosmic-text",
  "log",
@@ -2451,7 +2451,7 @@ dependencies = [
 
 [[package]]
 name = "rustroke-toolkit"
-version = "1.0.0"
+version = "2.0.0"
 dependencies = [
  "rfd",
  "rtk-document",
@@ -2461,9 +2461,9 @@ dependencies = [
 
 [[package]]
 name = "rustroke-widgets"
-version = "0.19.0"
+version = "0.20.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "76e00dead175f9fa6ef8f7a73aaafaaada02b1fa860460a449406afac795b7c8"
+checksum = "1684a2e30f4d010214e1d5a299fd53d7a92a001a5c2d30d0b8eca2fc9566cc7f"
 dependencies = [
  "accesskit",
  "rustroke-core",
@@ -2475,9 +2475,9 @@ dependencies = [
 
 [[package]]
 name = "rustroke-winit"
-version = "0.19.0"
+version = "0.20.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "d041318b5b8bec3c7cdbd5bda960f9e69bc3d348616d03b1c2174e245d357255"
+checksum = "5eb18a8c6a1e2db04cb9275b0cb499c4333a0855a68fcbc931bf52f89e8e2b31"
 dependencies = [
  "accesskit",
  "accesskit_winit",

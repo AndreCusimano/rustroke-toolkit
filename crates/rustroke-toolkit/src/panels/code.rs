@@ -91,9 +91,7 @@ pub fn show(ui: &mut Ui<'_>, app: &mut Toolkit, now: f64) {
         }
     }
 
-    ui.horizontal(|ui| {
-        ui.heading(format!("{view_name}.rs"));
-    });
+    ui.heading(format!("{view_name}.rs"));
     if let Some(err) = &app.code.error {
         let red = ui.style().visuals.error;
         ui.add(Label::new(format!("{err}")).color(red));

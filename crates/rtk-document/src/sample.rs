@@ -4,7 +4,7 @@
 
 use crate::kind::WidgetKind as K;
 use crate::model::{Node, NodeId, Project, RawField, View, WindowSettings};
-use crate::value::{Font, FontFamily, Shadow, Value};
+use crate::value::{Font, FontFamily, Shadow, Sizing, Value};
 
 fn text(s: &str) -> Value {
     Value::Text(s.to_owned())
@@ -75,7 +75,7 @@ fn login() -> View {
         &[("binding", text("remember")), ("text", text("Remember me"))],
     );
     add(&mut v, None, K::Space, &[("amount", Value::Float(8.0))]);
-    let row = add(&mut v, None, K::Horizontal, &[]);
+    let row = add(&mut v, None, K::Stack, &[("direction", text("row"))]);
     add(&mut v, Some(row), K::Button, &[("text", text("Cancel"))]);
     add(
         &mut v,
@@ -209,7 +209,12 @@ fn settings() -> View {
             ("items", Value::Items(Vec::new())),
         ],
     );
-    let modes = add(&mut v, Some(display), K::Horizontal, &[]);
+    let modes = add(
+        &mut v,
+        Some(display),
+        K::Stack,
+        &[("direction", text("row"))],
+    );
     for (i, label) in ["Window", "Fullscreen", "Borderless"].iter().enumerate() {
         add(
             &mut v,
@@ -225,8 +230,8 @@ fn settings() -> View {
     let tabs = add(
         &mut v,
         Some(display),
-        K::Horizontal,
-        &[("wrapped", Value::Bool(true))],
+        K::Stack,
+        &[("direction", text("row")), ("wrap", Value::Bool(true))],
     );
     for (i, label) in ["General", "Advanced"].iter().enumerate() {
         add(
@@ -308,39 +313,53 @@ fn settings() -> View {
     );
     add(&mut v, None, K::ScrollArea, &[]);
 
-    let indent = add(&mut v, None, K::Indent, &[]);
+    let indent = add(
+        &mut v,
+        None,
+        K::Stack,
+        &[("margin", Value::Size(18.0, 0.0))],
+    );
     add(
         &mut v,
         Some(indent),
         K::Label,
         &[("text", text("Indented"))],
     );
-    let centered = add(&mut v, None, K::VerticalCentered, &[]);
+    let centered = add(
+        &mut v,
+        None,
+        K::Stack,
+        &[
+            ("align", text("Center")),
+            ("width", Value::Sizing(Sizing::Fill)),
+        ],
+    );
     add(
         &mut v,
         Some(centered),
         K::Label,
         &[("text", text("Centered"))],
     );
-    add(&mut v, None, K::Vertical, &[]);
+    add(&mut v, None, K::Stack, &[]);
 
-    let flex = add(
+    let toolbar = add(
         &mut v,
         None,
-        K::Flex,
+        K::Stack,
         &[
-            ("id", text("toolbar")),
+            ("direction", text("row")),
             ("wrap", Value::Bool(true)),
             ("gap", Value::Float(8.0)),
             ("justify", text("SpaceBetween")),
             ("align", text("Center")),
+            ("width", Value::Sizing(Sizing::Fill)),
         ],
     );
-    add(&mut v, Some(flex), K::Button, &[("text", text("Apply"))]);
+    add(&mut v, Some(toolbar), K::Button, &[("text", text("Apply"))]);
     let item = add(
         &mut v,
-        Some(flex),
-        K::FlexItem,
+        Some(toolbar),
+        K::StackItem,
         &[
             ("grow", Value::Float(1.0)),
             ("shrink", Value::Float(0.0)),
@@ -354,11 +373,13 @@ fn settings() -> View {
         K::TextEdit,
         &[("binding", text("name"))],
     );
+    add(&mut v, None, K::Stack, &[("direction", text("overlay"))]);
+
     add(
         &mut v,
         None,
-        K::Flex,
-        &[("id", text("column")), ("direction", text("column"))],
+        K::Plot,
+        &[("id", text("empty_plot")), ("height", Value::Float(60.0))],
     );
 
     appearance(&mut v);
@@ -403,7 +424,7 @@ fn appearance(v: &mut View) {
     let box_ = add(
         v,
         Some(section),
-        K::Vertical,
+        K::Stack,
         &[
             ("widget_fill", Value::Color([40, 44, 52, 255])),
             ("field_fill", Value::Color([20, 22, 26, 255])),
@@ -628,15 +649,22 @@ fn appearance(v: &mut View) {
     let layout = add(
         v,
         Some(section),
-        K::FlexGrid,
+        K::Grid,
         &[
             ("id", text("layout")),
             ("columns", text("120, 1fr, auto")),
-            ("gap", Value::Float(6.0)),
+            ("spacing", Value::Size(6.0, 6.0)),
+            ("align_x", text("Stretch")),
+            ("fill", Value::Color([30, 34, 40, 255])),
+            ("stroke", Value::Stroke(1.0, [70, 76, 88, 255])),
+            ("corner_radius", Value::Float(6.0)),
+            ("padding", Value::Size(8.0, 8.0)),
+            ("width", Value::Sizing(Sizing::Fill)),
         ],
     );
     add(v, Some(layout), K::Label, &[("text", text("Name"))]);
     add(v, Some(layout), K::TextEdit, &[("binding", text("name"))]);
+    add(v, Some(layout), K::EndRow, &[]);
     let wide = add(
         v,
         Some(layout),
@@ -650,12 +678,33 @@ fn appearance(v: &mut View) {
         ],
     );
     add(v, Some(wide), K::Button, &[("text", text("Across"))]);
-    add(v, None, K::FlexGrid, &[("id", text("empty_grid"))]);
-    let flex = add(v, Some(section), K::Flex, &[("id", text("styled"))]);
+    let span = add(
+        v,
+        Some(layout),
+        K::GridCell,
+        &[("column_span", Value::Int(2))],
+    );
     add(
         v,
-        Some(flex),
-        K::FlexItem,
+        Some(span),
+        K::Label,
+        &[("text", text("Two columns, after the last cell"))],
+    );
+    add(
+        v,
+        None,
+        K::Grid,
+        &[
+            ("id", text("empty_grid")),
+            ("height", Value::Sizing(Sizing::Points(40.0))),
+            ("clip", Value::Bool(true)),
+        ],
+    );
+    let stack = add(v, Some(section), K::Stack, &[("direction", text("row"))]);
+    add(
+        v,
+        Some(stack),
+        K::StackItem,
         &[("text_color", Value::Color([255, 0, 0, 255]))],
     );
     add(
@@ -667,25 +716,28 @@ fn appearance(v: &mut View) {
     add(
         v,
         Some(section),
-        K::Horizontal,
-        &[("accent", Value::Color([255, 200, 0, 255]))],
+        K::Stack,
+        &[
+            ("direction", text("row")),
+            ("accent", Value::Color([255, 200, 0, 255])),
+        ],
     );
     add(
         v,
         Some(section),
-        K::Indent,
+        K::Stack,
         &[("text_color", Value::Color([255, 255, 255, 128]))],
     );
     add(
         v,
         Some(section),
-        K::VerticalCentered,
+        K::Stack,
         &[("widget_fill", Value::Color([0, 0, 0, 255]))],
     );
 }
 
 /// Zones: a sidebar as tall as the window with a width between limits,
-/// a top bar, and the rest with cards.
+/// a top bar, and the rest with cards and charts.
 fn dashboard() -> View {
     let mut v = View::new("dashboard");
     v.window = WindowSettings {
@@ -716,7 +768,7 @@ fn dashboard() -> View {
             ("text", text(item)),
         ];
         if i == 0 {
-            props.push(("text_color", Value::Color([46, 160, 103, 255])));
+            props.push(("text_color", Value::Color([255, 214, 102, 255])));
             props.push((
                 "font",
                 Value::Font(Font {
@@ -768,7 +820,7 @@ fn dashboard() -> View {
             ("margin", Value::Float(6.0)),
         ],
     );
-    let row = add(&mut v, Some(top), K::Horizontal, &[]);
+    let row = add(&mut v, Some(top), K::Stack, &[("direction", text("row"))]);
     add(
         &mut v,
         Some(row),
@@ -806,33 +858,24 @@ fn dashboard() -> View {
         K::CentralPanel,
         &[("margin", Value::Float(12.0))],
     );
-    let flex = add(
+    let content = add(
         &mut v,
         Some(central),
-        K::Flex,
+        K::Stack,
         &[
-            ("id", text("cards")),
             ("gap", Value::Float(12.0)),
-            ("align", text("Stretch")),
-            ("fill_height", Value::Bool(true)),
+            ("width", Value::Sizing(Sizing::Fill)),
+            ("height", Value::Sizing(Sizing::Fill)),
         ],
     );
-    let card = |v: &mut View, title: &str, grow: f64, max: f64| {
-        let item = add(
+    // A card; `tall` ones take the height of their row.
+    let card = |v: &mut View, parent: NodeId, title: &str, tall: bool| {
+        let card = add(
             v,
-            Some(flex),
-            K::FlexItem,
+            Some(parent),
+            K::Stack,
             &[
-                ("grow", Value::Float(grow)),
-                ("min_size", Value::Size(160.0, 0.0)),
-                ("max_size", Value::Size(max, f64::INFINITY)),
-            ],
-        );
-        let container = add(
-            v,
-            Some(item),
-            K::Container,
-            &[
+                ("gap", Value::Float(8.0)),
                 ("fill", Value::Color([40, 44, 52, 255])),
                 ("stroke", Value::Stroke(1.0, [70, 76, 88, 255])),
                 ("corner_radius", Value::Float(8.0)),
@@ -845,16 +888,19 @@ fn dashboard() -> View {
                         color: [0, 0, 0, 90],
                     }),
                 ),
-                ("inner_margin", Value::Size(12.0, 10.0)),
-                ("fill_width", Value::Bool(true)),
-                ("fill_height", Value::Bool(true)),
+                ("padding", Value::Size(12.0, 10.0)),
+                ("width", Value::Sizing(Sizing::Fill)),
                 ("text_color", Value::Color([235, 238, 245, 255])),
             ],
         );
-        add(v, Some(container), K::Heading, &[("text", text(title))]);
-        container
+        if tall {
+            let height = Some(Value::Sizing(Sizing::Fill));
+            v.set_prop(card, "height", height).expect("valid");
+        }
+        add(v, Some(card), K::Heading, &[("text", text(title))]);
+        card
     };
-    let sales = card(&mut v, "Sales", 2.0, 600.0);
+    let sales = card(&mut v, content, "Sales", false);
     add(
         &mut v,
         Some(sales),
@@ -875,7 +921,98 @@ fn dashboard() -> View {
             ("bar_color", Value::Color([200, 120, 40, 255])),
         ],
     );
-    let notes = card(&mut v, "Notes", 1.0, 360.0);
+    let plot = add(
+        &mut v,
+        Some(sales),
+        K::Plot,
+        &[
+            ("id", text("sales_plot")),
+            ("x_label", text("Month")),
+            ("y_label", text("k€")),
+            ("legend", text("TopLeft")),
+            ("allow_zoom", Value::Bool(false)),
+            ("height", Value::Float(160.0)),
+        ],
+    );
+    add(
+        &mut v,
+        Some(plot),
+        K::PlotLine,
+        &[
+            ("binding", text("sales")),
+            ("name", text("Sales")),
+            ("color", Value::Color([46, 160, 103, 255])),
+            ("width", Value::Float(2.0)),
+            ("fill", Value::Float(0.0)),
+            ("mark_min_max", Value::Bool(true)),
+        ],
+    );
+    add(
+        &mut v,
+        Some(plot),
+        K::PlotPoints,
+        &[
+            ("binding", text("orders")),
+            ("name", text("Orders")),
+            ("radius", Value::Float(3.0)),
+            ("shape", text("Diamond")),
+            ("filled", Value::Bool(false)),
+        ],
+    );
+    add(
+        &mut v,
+        Some(plot),
+        K::PlotHLine,
+        &[
+            ("value", Value::Float(50.0)),
+            ("name", text("Target")),
+            ("color", Value::Color([200, 120, 40, 255])),
+            ("style", text("dashed")),
+        ],
+    );
+    add(
+        &mut v,
+        Some(plot),
+        K::PlotVLine,
+        &[("value", Value::Float(6.0)), ("style", text("dotted"))],
+    );
+    add(
+        &mut v,
+        Some(plot),
+        K::RawCode,
+        &[(
+            "code",
+            text("// Other series (bars, heat maps) go here as code."),
+        )],
+    );
+    // A row of cards sharing the width, each between limits.
+    let cards = add(
+        &mut v,
+        Some(content),
+        K::Stack,
+        &[
+            ("direction", text("row")),
+            ("gap", Value::Float(12.0)),
+            ("align", text("Stretch")),
+            ("width", Value::Sizing(Sizing::Fill)),
+            ("height", Value::Sizing(Sizing::Fill)),
+        ],
+    );
+    let item = |v: &mut View, title: &str, grow: f64, max: f64| {
+        let item = add(
+            v,
+            Some(cards),
+            K::StackItem,
+            &[
+                ("grow", Value::Float(grow)),
+                ("basis", Value::Float(0.0)),
+                ("min_size", Value::Size(160.0, 0.0)),
+                ("max_size", Value::Size(max, f64::INFINITY)),
+            ],
+        );
+        card(v, item, title, true)
+    };
+    let notes = item(&mut v, "Notes", 2.0, 520.0);
     let section = add(
         &mut v,
         Some(notes),
@@ -899,10 +1036,11 @@ fn dashboard() -> View {
     let limited = add(
         &mut v,
         Some(notes),
-        K::Container,
+        K::Stack,
         &[
             ("stroke", Value::Stroke(1.0, [120, 120, 120, 255])),
-            ("outer_margin", Value::Size(0.0, 6.0)),
+            ("padding", Value::Size(6.0, 6.0)),
+            ("margin", Value::Size(0.0, 6.0)),
             ("min_size", Value::Size(0.0, 60.0)),
             ("max_size", Value::Size(f64::INFINITY, 120.0)),
         ],
@@ -921,6 +1059,30 @@ fn dashboard() -> View {
             ("text", text("Archive")),
             ("text_color", Value::Color([255, 255, 255, 255])),
             ("fill", Value::Color([180, 60, 60, 255])),
+        ],
+    );
+    let share = item(&mut v, "Share", 3.0, 520.0);
+    let pies = add(&mut v, Some(share), K::Stack, &[("direction", text("row"))]);
+    add(
+        &mut v,
+        Some(pies),
+        K::PieChart,
+        &[
+            ("binding", text("share")),
+            ("donut", Value::Float(0.5)),
+            ("diameter", Value::Float(120.0)),
+            ("percentages", Value::Bool(false)),
+            ("start_angle", Value::Float(0.0)),
+        ],
+    );
+    add(
+        &mut v,
+        Some(pies),
+        K::PieChart,
+        &[
+            ("binding", text("share")),
+            ("diameter", Value::Float(120.0)),
+            ("legend", Value::Bool(false)),
         ],
     );
     v

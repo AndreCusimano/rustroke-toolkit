@@ -92,7 +92,7 @@ fn clicking_a_container_selects_it_and_children_win() {
         .view
         .nodes
         .iter()
-        .find(|n| n.kind == WidgetKind::Horizontal)
+        .find(|n| n.kind == WidgetKind::Stack && n.text("direction") == "row")
         .unwrap()
         .id;
     let rect = app.state.rect(row).unwrap();

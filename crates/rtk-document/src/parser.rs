@@ -20,7 +20,21 @@ use crate::builders::{Arg, builder_methods};
 use crate::codegen::{HEADER_PREFIX, MANAGED_IMPORTS};
 use crate::kind::{CONTENT_STYLE, WidgetKind, content_style_target};
 use crate::model::{Node, RawField, View, WindowSettings};
-use crate::value::{Font, FontFamily, PropKind, Shadow, Track, Value, format_tracks};
+use crate::value::{Font, FontFamily, PropKind, Shadow, Sizing, Track, Value, format_tracks};
+
+/// Names of the layouts rustroke 0.20 deprecated, which the parser turns
+/// into stacks and grids.
+const LEGACY_IMPORTS: &[&str] = &[
+    "Container",
+    "Flex",
+    "FlexAlign",
+    "FlexDirection",
+    "FlexGrid",
+    "FlexItem",
+    "FlexJustify",
+    "FlexUi",
+    "GridUi",
+];
 
 /// Why a file couldn't be read.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -66,6 +80,7 @@ fn parse_inner(name: &str, source: &str) -> Result<View, ParseError> {
             .chain(source.match_indices('\n').map(|(i, _)| i + 1))
             .collect(),
         view: View::new(name),
+        in_plot: false,
     };
     parser.file(&file)?;
     Ok(parser.view)
@@ -75,6 +90,8 @@ struct Parser<'s> {
     src: &'s str,
     line_starts: Vec<usize>,
     view: View,
+    /// Reading the closure of a `Plot`: only series are nodes there.
+    in_plot: bool,
 }
 
 // ---- Expression helpers ----------------------------------------------------
@@ -316,6 +333,79 @@ fn lit_tracks(e: &Expr) -> Option<Vec<Track>> {
             _ => None,
         })
         .collect()
+}
+
+/// `Sizing::Content`, `Sizing::Fill` or `Sizing::Points(n)`
+fn lit_sizing(e: &Expr) -> Option<Sizing> {
+    match e {
+        Expr::Path(p) => match compact(p).as_str() {
+            "Sizing::Content" => Some(Sizing::Content),
+            "Sizing::Fill" => Some(Sizing::Fill),
+            _ => None,
+        },
+        Expr::Call(call) if compact(&call.func) == "Sizing::Points" && call.args.len() == 1 => {
+            Some(Sizing::Points(lit_float(&call.args[0])?))
+        }
+        _ => None,
+    }
+}
+
+/// `Axis::new().label("title")`
+fn lit_axis_label(e: &Expr) -> Option<String> {
+    let chain = chain(e)?;
+    match (chain.ty.as_str(), chain.ctor.as_str(), &chain.calls[..]) {
+        ("Axis", "new", [label]) if chain.args.is_empty() && label.method == "label" => {
+            match label.args.iter().collect::<Vec<_>>()[..] {
+                [text] => lit_str(text),
+                _ => None,
+            }
+        }
+        _ => None,
+    }
+}
+
+/// `LineStyle::Solid`, `LineStyle::dashed()` or `LineStyle::dotted()`
+fn lit_line_style(e: &Expr) -> Option<&'static str> {
+    if let Expr::Path(p) = e {
+        return (compact(p) == "LineStyle::Solid").then_some("solid");
+    }
+    let chain = chain(e)?;
+    if chain.ty != "LineStyle" || !chain.args.is_empty() || !chain.calls.is_empty() {
+        return None;
+    }
+    match chain.ctor.as_str() {
+        "dashed" => Some("dashed"),
+        "dotted" => Some("dotted"),
+        _ => None,
+    }
+}
+
+/// `Type::Variant` → `Variant`
+fn variant<'e>(e: &'e Expr, ty: &str) -> Option<&'e syn::Ident> {
+    let Expr::Path(p) = e else {
+        return None;
+    };
+    let segments = &p.path.segments;
+    (p.qself.is_none() && segments.len() == 2 && segments[0].ident == ty)
+        .then(|| &segments[1].ident)
+}
+
+/// `&self.name`
+fn ref_self_field(e: &Expr) -> Option<String> {
+    match e {
+        Expr::Reference(r) if r.mutability.is_none() => self_field(&r.expr),
+        _ => None,
+    }
+}
+
+/// `self.name.clone()`
+fn cloned_self_field(e: &Expr) -> Option<String> {
+    match e {
+        Expr::MethodCall(call) if call.method == "clone" && call.args.is_empty() => {
+            self_field(&call.receiver)
+        }
+        _ => None,
+    }
 }
 
 /// The code of `tokens` without spaces, to compare with a known shape.
@@ -653,6 +743,22 @@ impl Parser<'_> {
             .into_iter()
             .filter(|field| !bound.contains(&field.name))
             .collect();
+
+        // Layouts of rustroke 0.19 read as stacks and grids: their imports
+        // go, unless free code still uses them.
+        let mut free = Vec::new();
+        self.view.walk(|node| {
+            if node.kind == WidgetKind::RawCode {
+                free.push(node.text("code").to_owned());
+            }
+        });
+        free.extend(self.view.extra_methods.iter().cloned());
+        free.extend(self.view.extra_items.iter().cloned());
+        free.extend(self.view.extra_fields.iter().map(|f| f.code.clone()));
+        self.view.extra_imports.retain(|name| {
+            !LEGACY_IMPORTS.contains(&name.as_str())
+                || free.iter().any(|code| crate::codegen::mentions(code, name))
+        });
         Ok(())
     }
 
@@ -835,6 +941,14 @@ impl Parser<'_> {
     }
 
     fn stmt(&mut self, stmt: &Stmt, ui: &str) -> Option<Node> {
+        if self.in_plot {
+            return match stmt {
+                Stmt::Expr(Expr::MethodCall(call), Some(_)) if is_ident(&call.receiver, ui) => {
+                    self.series(call)
+                }
+                _ => None,
+            };
+        }
         match stmt {
             Stmt::Expr(Expr::If(e), None) => {
                 self.button_if(e, ui).or_else(|| self.choice_if(e, ui))
@@ -934,13 +1048,34 @@ impl Parser<'_> {
         let chain = chain(e)?;
         let (last, builders) = chain.calls.split_last()?;
         let terminal = last.method.to_string();
+        if (chain.ty.as_str(), chain.ctor.as_str(), terminal.as_str())
+            == ("PieChart", "new", "show")
+        {
+            // `PieChart::new(self.x.clone())….show(ui)`
+            let ([slices], [arg]) = (
+                &chain.args.iter().collect::<Vec<_>>()[..],
+                &last.args.iter().collect::<Vec<_>>()[..],
+            ) else {
+                return None;
+            };
+            if !is_ident(arg, ui) {
+                return None;
+            }
+            let mut node = self.node(WidgetKind::PieChart);
+            node.props
+                .insert("binding", Value::Text(cloned_self_field(slices)?));
+            apply_builders(&mut node, builders)?;
+            return Some(node);
+        }
+        if let Some(node) = self.legacy(&chain, ui) {
+            return Some(node);
+        }
         let kind = match (chain.ty.as_str(), chain.ctor.as_str(), terminal.as_str()) {
             ("Grid", "new", "show") => WidgetKind::Grid,
             ("CollapsingHeader", "new", "show") => WidgetKind::Collapsing,
             ("ScrollArea", "vertical" | "horizontal" | "both", "show") => WidgetKind::ScrollArea,
-            ("Flex", "row" | "column", "show") => WidgetKind::Flex,
-            ("FlexGrid", "new", "show") => WidgetKind::FlexGrid,
-            ("Container", "new", "show") => WidgetKind::Container,
+            ("Stack", "row" | "column" | "overlay", "show") => WidgetKind::Stack,
+            ("Plot", "new", "show") => WidgetKind::Plot,
             ("Panel", "left" | "right" | "top" | "bottom", "show_inside") => WidgetKind::Panel,
             ("CentralPanel", "default", "show_inside") => WidgetKind::CentralPanel,
             ("ComboBox", "from_label", "show_ui") => WidgetKind::ComboBox,
@@ -952,23 +1087,18 @@ impl Parser<'_> {
         let (param, body) = closure(&last.args[1])?;
         let mut node = self.node(kind);
         match kind {
-            WidgetKind::Grid | WidgetKind::Flex => {
+            WidgetKind::Grid | WidgetKind::Plot => {
                 let [id] = chain.args.iter().collect::<Vec<_>>()[..] else {
                     return None;
                 };
                 node.props.insert("id", Value::Text(lit_str(id)?));
-                if kind == WidgetKind::Flex {
-                    node.props
-                        .insert("direction", Value::Text(chain.ctor.clone()));
-                }
             }
-            WidgetKind::FlexGrid => {
-                let [id, columns] = chain.args.iter().collect::<Vec<_>>()[..] else {
+            WidgetKind::Stack => {
+                if !chain.args.is_empty() {
                     return None;
-                };
-                node.props.insert("id", Value::Text(lit_str(id)?));
-                let columns = format_tracks(&lit_tracks(columns)?);
-                node.props.insert("columns", Value::Text(columns));
+                }
+                node.props
+                    .insert("direction", Value::Text(chain.ctor.clone()));
             }
             WidgetKind::Collapsing => {
                 let [text] = chain.args.iter().collect::<Vec<_>>()[..] else {
@@ -983,7 +1113,7 @@ impl Parser<'_> {
                 node.props
                     .insert("direction", Value::Text(chain.ctor.clone()));
             }
-            WidgetKind::Container | WidgetKind::CentralPanel => {
+            WidgetKind::CentralPanel => {
                 if !chain.args.is_empty() {
                     return None;
                 }
@@ -1015,83 +1145,138 @@ impl Parser<'_> {
                 node.props.insert("binding", Value::Text(binding));
                 node.props.insert("items", Value::Items(items));
             }
-            WidgetKind::Flex => {
-                node.children = self.flex_items(body, &param)?;
-            }
-            WidgetKind::FlexGrid => {
-                node.children = self.grid_cells(body, &param)?;
+            WidgetKind::Plot => {
+                self.in_plot = true;
+                node.children = self.block(body, &param, None);
+                self.in_plot = false;
             }
             _ => node.children = self.block(body, &param, Some(&mut node.props)),
         }
         Some(node)
     }
 
-    /// The cells of a flex grid: every statement must be
-    /// `grid.add(GridCell::at(c, r)[.span(c, r)], |ui| …);`.
-    fn grid_cells(&mut self, body: &Block, grid: &str) -> Option<Vec<Node>> {
-        let mut cells = Vec::new();
-        for stmt in &body.stmts {
-            let Stmt::Expr(Expr::MethodCall(call), Some(_)) = stmt else {
-                return None;
-            };
-            if !is_ident(&call.receiver, grid) || call.method != "add" || call.args.len() != 2 {
-                return None;
-            }
-            let chain = chain(&call.args[0])?;
-            let [column, row] = chain.args.iter().collect::<Vec<_>>()[..] else {
-                return None;
-            };
-            if chain.ty != "GridCell" || chain.ctor != "at" {
-                return None;
-            }
-            let mut cell = self.node(WidgetKind::GridCell);
-            let mut set = |key: &'static str, e: &Expr| -> Option<()> {
-                let value = Value::Int(lit_int(e)?);
-                WidgetKind::GridCell
-                    .prop(key)?
-                    .kind
-                    .accepts(&value)
-                    .then(|| cell.props.insert(key, value))
-                    .map(|_| ())
-            };
-            set("column", column)?;
-            set("row", row)?;
-            match chain.calls[..] {
-                [] => {}
-                [span] if span.method == "span" && span.args.len() == 2 => {
-                    set("column_span", &span.args[0])?;
-                    set("row_span", &span.args[1])?;
-                }
-                _ => return None,
-            }
-            let (param, block) = closure(&call.args[1])?;
-            cell.children = self.block(block, &param, Some(&mut cell.props));
-            cells.push(cell);
+    /// `plot.line(Line::new(&self.x)…)`, `plot.points(Points::new(&self.x)…)`,
+    /// `plot.hline(HLine::new(y)…)` or `plot.vline(VLine::new(x)…)`.
+    fn series(&mut self, call: &ExprMethodCall) -> Option<Node> {
+        let [arg] = call.args.iter().collect::<Vec<_>>()[..] else {
+            return None;
+        };
+        let chain = chain(arg)?;
+        let kind = match (call.method.to_string().as_str(), chain.ty.as_str()) {
+            ("line", "Line") => WidgetKind::PlotLine,
+            ("points", "Points") => WidgetKind::PlotPoints,
+            ("hline", "HLine") => WidgetKind::PlotHLine,
+            ("vline", "VLine") => WidgetKind::PlotVLine,
+            _ => return None,
+        };
+        let [value] = chain.args.iter().collect::<Vec<_>>()[..] else {
+            return None;
+        };
+        if chain.ctor != "new" || call.turbofish.is_some() {
+            return None;
         }
-        Some(cells)
+        let mut node = self.node(kind);
+        match kind {
+            WidgetKind::PlotLine | WidgetKind::PlotPoints => {
+                node.props
+                    .insert("binding", Value::Text(ref_self_field(value)?));
+            }
+            _ => {
+                node.props.insert("value", Value::Float(lit_float(value)?));
+            }
+        }
+        apply_builders(&mut node, &chain.calls)?;
+        Some(node)
     }
 
-    /// The items of a flex: every statement must be `flex.add(FlexItem…, |ui| …);`.
-    fn flex_items(&mut self, body: &Block, flex: &str) -> Option<Vec<Node>> {
-        let mut items = Vec::new();
-        for stmt in &body.stmts {
-            let Stmt::Expr(Expr::MethodCall(call), Some(_)) = stmt else {
-                return None;
-            };
-            if !is_ident(&call.receiver, flex) || call.method != "add" || call.args.len() != 2 {
-                return None;
-            }
-            let chain = chain(&call.args[0])?;
-            if chain.ty != "FlexItem" || chain.ctor != "new" || !chain.args.is_empty() {
-                return None;
-            }
-            let (param, block) = closure(&call.args[1])?;
-            let mut item = self.node(WidgetKind::FlexItem);
-            apply_builders(&mut item, &chain.calls)?;
-            item.children = self.block(block, &param, Some(&mut item.props));
-            items.push(item);
+    /// Code written for rustroke 0.19 (toolkit 1.x) with the layouts it
+    /// deprecated: `Container`, `Flex` and `FlexGrid` become a stack or a
+    /// grid. `None` for anything else (or a shape it doesn't know).
+    fn legacy(&mut self, chain: &Chain<'_>, ui: &str) -> Option<Node> {
+        let (last, builders) = chain.calls.split_last()?;
+        if last.method != "show" || last.args.len() != 2 || !is_ident(&last.args[0], ui) {
+            return None;
         }
-        Some(items)
+        let args: Vec<&Expr> = chain.args.iter().collect();
+        let (param, body) = closure(&last.args[1])?;
+        let mut node = match (chain.ty.as_str(), chain.ctor.as_str(), &args[..]) {
+            ("Container", "new", []) => {
+                let mut node = self.node(WidgetKind::Stack);
+                node.props.insert("direction", Value::Text("column".into()));
+                node
+            }
+            ("Flex", "row" | "column", [_id]) => {
+                let mut node = self.node(WidgetKind::Stack);
+                node.props
+                    .insert("direction", Value::Text(chain.ctor.clone()));
+                node
+            }
+            ("FlexGrid", "new", [id, columns]) => {
+                let mut node = self.node(WidgetKind::Grid);
+                node.props.insert("id", Value::Text(lit_str(id)?));
+                let columns = format_tracks(&lit_tracks(columns)?);
+                node.props.insert("columns", Value::Text(columns));
+                node
+            }
+            _ => return None,
+        };
+        legacy_builders(&mut node, builders)?;
+        match chain.ty.as_str() {
+            "Container" => node.children = self.block(body, &param, Some(&mut node.props)),
+            _ => {
+                // `flex.add(FlexItem…, |ui| …);` / `grid.add(GridCell…, |ui| …);`
+                for stmt in &body.stmts {
+                    let Stmt::Expr(Expr::MethodCall(call), Some(_)) = stmt else {
+                        return None;
+                    };
+                    if !is_ident(&call.receiver, &param)
+                        || call.method != "add"
+                        || call.args.len() != 2
+                    {
+                        return None;
+                    }
+                    let item = self::chain(&call.args[0])?;
+                    let (param, block) = closure(&call.args[1])?;
+                    let mut child = match (item.ty.as_str(), item.ctor.as_str()) {
+                        ("FlexItem", "new") if node.kind == WidgetKind::Stack => {
+                            let mut child = self.node(WidgetKind::StackItem);
+                            legacy_builders(&mut child, &item.calls)?;
+                            child
+                        }
+                        ("GridCell", "at") if node.kind == WidgetKind::Grid => {
+                            let mut child = self.node(WidgetKind::GridCell);
+                            let [column, row] = item.args.iter().collect::<Vec<_>>()[..] else {
+                                return None;
+                            };
+                            child.props.insert("column", Value::Int(lit_int(column)?));
+                            child.props.insert("row", Value::Int(lit_int(row)?));
+                            match item.calls[..] {
+                                [] => {}
+                                [span] if span.method == "span" && span.args.len() == 2 => {
+                                    child
+                                        .props
+                                        .insert("column_span", Value::Int(lit_int(&span.args[0])?));
+                                    child
+                                        .props
+                                        .insert("row_span", Value::Int(lit_int(&span.args[1])?));
+                                }
+                                _ => return None,
+                            }
+                            child
+                        }
+                        _ => return None,
+                    };
+                    child.children = self.block(block, &param, Some(&mut child.props));
+                    node.children.push(child);
+                }
+            }
+        }
+        let valid = node.props.iter().all(|(key, value)| {
+            node.kind
+                .prop(key)
+                .is_some_and(|spec| spec.kind.accepts(value))
+        });
+        valid.then_some(node)
     }
 
     /// `ui.method(..)`
@@ -1175,18 +1360,72 @@ impl Parser<'_> {
                     .insert("multiline", Value::Bool(method == "text_edit_multiline"));
                 node
             }
-            ("vertical", [c]) => container(self, WidgetKind::Vertical, c)?,
-            ("vertical_centered", [c]) => container(self, WidgetKind::VerticalCentered, c)?,
-            ("indent", [c]) => container(self, WidgetKind::Indent, c)?,
-            ("horizontal" | "horizontal_wrapped", [c]) => {
-                let mut node = container(self, WidgetKind::Horizontal, c)?;
+            // The short forms of a stack, and layouts it replaces.
+            (
+                "vertical" | "horizontal" | "horizontal_wrapped" | "vertical_centered" | "indent",
+                [c],
+            ) => {
+                let mut node = container(self, WidgetKind::Stack, c)?;
+                let row = method.starts_with("horizontal");
+                let direction = if row { "row" } else { "column" };
                 node.props
-                    .insert("wrapped", Value::Bool(method == "horizontal_wrapped"));
+                    .insert("direction", Value::Text(direction.into()));
+                match method.as_str() {
+                    "horizontal_wrapped" => {
+                        node.props.insert("wrap", Value::Bool(true));
+                    }
+                    "vertical_centered" => {
+                        node.props.insert("align", Value::Text("Center".into()));
+                    }
+                    "indent" => {
+                        // `spacing.indent`, 18 points by default.
+                        node.props.insert("margin", Value::Size(18.0, 0.0));
+                    }
+                    _ => {}
+                }
                 node
             }
             ("collapsing", [t, c]) => {
                 let mut node = container(self, WidgetKind::Collapsing, c)?;
                 text(&mut node, "text", t)?;
+                node
+            }
+            ("stack_item", [item, c]) => {
+                let item = chain(item)?;
+                if (item.ty.as_str(), item.ctor.as_str()) != ("StackItem", "new")
+                    || !item.args.is_empty()
+                {
+                    return None;
+                }
+                let mut node = container(self, WidgetKind::StackItem, c)?;
+                apply_builders(&mut node, &item.calls)?;
+                node
+            }
+            ("grid_span", [columns, rows, c]) => {
+                let mut node = container(self, WidgetKind::GridCell, c)?;
+                cell_index(&mut node, "column_span", columns)?;
+                cell_index(&mut node, "row_span", rows)?;
+                node
+            }
+            ("grid_cell", [cell, c]) => {
+                let cell = chain(cell)?;
+                let [column, row] = cell.args.iter().collect::<Vec<_>>()[..] else {
+                    return None;
+                };
+                if (cell.ty.as_str(), cell.ctor.as_str()) != ("GridCell", "at") {
+                    return None;
+                }
+                let mut node = container(self, WidgetKind::GridCell, c)?;
+                cell_index(&mut node, "column", column)?;
+                cell_index(&mut node, "row", row)?;
+                match cell.calls[..] {
+                    [] => {}
+                    [span] if span.method == "span" && span.args.len() == 2 => {
+                        cell_index(&mut node, "column_span", &span.args[0])?;
+                        cell_index(&mut node, "row_span", &span.args[1])?;
+                    }
+                    _ => return None,
+                }
                 node
             }
             ("add", [widget]) => self.widget(widget, ui)?,
@@ -1348,13 +1587,12 @@ fn apply_builders(node: &mut Node, calls: &[&ExprMethodCall]) -> Option<()> {
                 Value::Stroke(width, color)
             }
             (Arg::Font, [e]) => Value::Font(lit_font(e)?),
-            (Arg::Variant(ty), [Expr::Path(p)]) => {
-                let segments = &p.path.segments;
-                if p.qself.is_some() || segments.len() != 2 || segments[0].ident != ty {
-                    return None;
-                }
-                Value::Text(segments[1].ident.to_string())
-            }
+            (Arg::Variant(ty), [e]) => Value::Text(variant(e, ty)?.to_string()),
+            (Arg::Sizing, [e]) => Value::Sizing(lit_sizing(e)?),
+            (Arg::Fill, []) => Value::Sizing(Sizing::Fill),
+            (Arg::Tracks, [e]) => Value::Text(format_tracks(&lit_tracks(e)?)),
+            (Arg::AxisLabel, [e]) => Value::Text(lit_axis_label(e)?),
+            (Arg::LineStyle, [e]) => Value::Text(lit_line_style(e)?.to_owned()),
             _ => return None,
         };
         let spec = node.kind.prop(key)?;
@@ -1364,6 +1602,68 @@ fn apply_builders(node: &mut Node, calls: &[&ExprMethodCall]) -> Option<()> {
         node.props.insert(spec.key, value);
     }
     Some(())
+}
+
+/// The builder calls of a `Container`, `Flex` or `FlexItem` written for
+/// rustroke 0.19, as stack, stack item or grid properties.
+fn legacy_builders(node: &mut Node, calls: &[&ExprMethodCall]) -> Option<()> {
+    for call in calls {
+        let args: Vec<&Expr> = call.args.iter().collect();
+        let method = call.method.to_string();
+        let fill = |e: &Expr| {
+            Some(Value::Sizing(if lit_bool(e)? {
+                Sizing::Fill
+            } else {
+                Sizing::Content
+            }))
+        };
+        let (key, value) = match (node.kind, method.as_str(), &args[..]) {
+            (WidgetKind::Stack, "inner_margin", [e]) => ("padding", size_value(e)?),
+            (WidgetKind::Stack, "outer_margin", [e]) => ("margin", size_value(e)?),
+            (WidgetKind::Stack, "fill_width", [e]) => ("width", fill(e)?),
+            (WidgetKind::Stack, "fill_height", [e]) => ("height", fill(e)?),
+            (WidgetKind::Stack | WidgetKind::StackItem, "justify" | "align", [e]) => {
+                let ty = if method == "justify" {
+                    "FlexJustify"
+                } else {
+                    "FlexAlign"
+                };
+                let key = if method == "justify" {
+                    "justify"
+                } else {
+                    "align"
+                };
+                (key, Value::Text(variant(e, ty)?.to_string()))
+            }
+            (WidgetKind::Grid, "gap", [e]) => {
+                let gap = lit_float(e)?;
+                ("spacing", Value::Size(gap, gap))
+            }
+            _ => {
+                // Same name and meaning as before.
+                apply_builders(node, &[call])?;
+                continue;
+            }
+        };
+        node.props.insert(key, value);
+    }
+    Some(())
+}
+
+fn size_value(e: &Expr) -> Option<Value> {
+    let (w, h) = lit_size(e)?;
+    Some(Value::Size(w, h))
+}
+
+/// A grid cell's column, row or span from an integer literal.
+fn cell_index(node: &mut Node, key: &'static str, e: &Expr) -> Option<()> {
+    let value = Value::Int(lit_int(e)?);
+    node.kind
+        .prop(key)?
+        .kind
+        .accepts(&value)
+        .then(|| node.props.insert(key, value))
+        .map(|_| ())
 }
 
 /// The options of a combo box: `ui.selectable_value(&mut self.b, i, "item");`
@@ -1523,7 +1823,7 @@ impl Form {
                 K::Heading,
                 K::TextEdit,
                 K::RawCode,
-                K::Horizontal,
+                K::Stack,
                 K::RawCode
             ]
         );
@@ -1560,6 +1860,76 @@ impl Form {
         // The generated code reads back the same way.
         let again = parse_view("form", &view_code(&view)).unwrap();
         assert_eq!(without_ids(&again).0.len(), view.nodes.len());
+    }
+
+    #[test]
+    fn layouts_of_rustroke_0_19_become_stacks_and_grids() {
+        let code = r#"
+use rustroke::{Container, Flex, FlexAlign, FlexGrid, FlexItem, FlexJustify, GridCell, Track, Ui, vec2};
+
+pub struct Old {}
+
+impl Old {
+    pub fn show(&mut self, ui: &mut Ui<'_>) {
+        Container::new()
+            .corner_radius(8.0)
+            .inner_margin(vec2(12.0, 10.0))
+            .outer_margin(vec2(0.0, 6.0))
+            .fill_width(true)
+            .show(ui, |ui| {
+                ui.label("Card");
+            });
+        Flex::row("cards")
+            .gap(12.0)
+            .justify(FlexJustify::SpaceBetween)
+            .align(FlexAlign::Stretch)
+            .fill_height(true)
+            .show(ui, |flex| {
+                flex.add(FlexItem::new().grow(1.0).align(FlexAlign::Center), |ui| {
+                    ui.label("Item");
+                });
+            });
+        FlexGrid::new("form", vec![Track::Points(120.0), Track::Fraction(1.0)])
+            .gap(6.0)
+            .show(ui, |grid| {
+                grid.add(GridCell::at(0, 1).span(2, 1), |ui| {
+                    ui.button("Save");
+                });
+            });
+    }
+}
+"#;
+        use WidgetKind as K;
+        let view = parse_view("old", code).unwrap();
+        let kinds: Vec<_> = view.nodes.iter().map(|n| n.kind).collect();
+        assert_eq!(kinds, [K::Stack, K::Stack, K::Grid]);
+        let card = &view.nodes[0];
+        assert_eq!(card.text("direction"), "column");
+        assert_eq!(card.prop("padding"), Some(&Value::Size(12.0, 10.0)));
+        assert_eq!(card.prop("margin"), Some(&Value::Size(0.0, 6.0)));
+        assert_eq!(card.prop("width"), Some(&Value::Sizing(Sizing::Fill)));
+        assert_eq!(card.children[0].kind, K::Label);
+        let row = &view.nodes[1];
+        assert_eq!(row.text("direction"), "row");
+        assert_eq!(row.text("justify"), "SpaceBetween");
+        assert_eq!(row.text("align"), "Stretch");
+        assert_eq!(row.prop("height"), Some(&Value::Sizing(Sizing::Fill)));
+        let item = &row.children[0];
+        assert_eq!((item.kind, item.text("align")), (K::StackItem, "Center"));
+        assert_eq!(item.prop("grow"), Some(&Value::Float(1.0)));
+        let grid = &view.nodes[2];
+        assert_eq!(grid.text("columns"), "120, 1fr");
+        assert_eq!(grid.prop("spacing"), Some(&Value::Size(6.0, 6.0)));
+        let cell = &grid.children[0];
+        assert_eq!(cell.kind, K::GridCell);
+        assert_eq!(cell.prop("row"), Some(&Value::Int(1)));
+        assert_eq!(cell.prop("column_span"), Some(&Value::Int(2)));
+        // Written back with the new layouts, without the old imports.
+        let new = view_code(&view);
+        assert!(new.contains("Stack::row()"), "{new}");
+        assert!(new.contains("ui.grid_cell("), "{new}");
+        assert!(new.contains("GridCell::at(0, 1).span(2, 1)"), "{new}");
+        assert!(!new.contains("Flex"), "{new}");
     }
 
     /// Small deterministic random generator (xorshift).
@@ -1624,6 +1994,11 @@ impl Form {
                     weight: [300, 400, 600, 700][self.below(4)],
                     bold: self.below(2) == 0,
                 }),
+                PropKind::Sizing => Value::Sizing(match self.below(3) {
+                    0 => Sizing::Content,
+                    1 => Sizing::Fill,
+                    _ => Sizing::Points(self.float().abs()),
+                }),
                 PropKind::Tracks => {
                     const TRACKS: &[&str] = &["120, 1fr", "auto", "50, 2.5fr, auto", "1fr, 1fr"];
                     Value::Text(TRACKS[self.below(TRACKS.len())].to_owned())
@@ -1651,7 +2026,7 @@ impl Form {
             if WidgetKind::accepts(parent, kind)
                 && (depth < 3
                     || !kind.is_container()
-                    || matches!(kind, WidgetKind::FlexItem | WidgetKind::GridCell))
+                    || matches!(kind, WidgetKind::StackItem | WidgetKind::GridCell))
             {
                 break kind;
             }
@@ -1665,8 +2040,8 @@ impl Form {
                 PropKind::Text => Value::Text(rng.text()),
                 PropKind::IdSalt => Value::Text(format!("id{}", rng.below(5))),
                 PropKind::Bool => Value::Bool(rng.below(2) == 0),
-                PropKind::Float { min, .. } => Value::Float(if min >= 0.0 {
-                    rng.float().abs()
+                PropKind::Float { min, max } => Value::Float(if min >= 0.0 {
+                    rng.float().abs().min(max)
                 } else {
                     rng.float()
                 }),
@@ -1685,6 +2060,13 @@ impl Form {
                 other => rng.value(other).expect("every kind of value"),
             };
             node.props.insert(spec.key, value);
+        }
+        // A cell is placed by its column and row together, or not at all.
+        if kind == WidgetKind::GridCell
+            && node.prop("column").is_some() != node.prop("row").is_some()
+        {
+            node.props.remove("column");
+            node.props.remove("row");
         }
         if kind.is_container() {
             node.children = random_children(rng, view, Some(kind), depth + 1);
@@ -1717,7 +2099,7 @@ impl Form {
         let mut rng = Rng(0x9E37_79B9_7F4A_7C15);
         let mut total = 0;
         let mut kinds = std::collections::BTreeSet::new();
-        for round in 0..400 {
+        for round in 0..600 {
             let mut view = View::new("random");
             for spec in CONTENT_STYLE {
                 if rng.below(4) == 0 {

@@ -81,31 +81,39 @@ impl Icons {
             K::TimePicker => self.widget_time_picker,
             K::ColorPicker => self.widget_color_picker,
             K::DatePicker => self.widget_date_picker,
-            K::Vertical => self.layout_vertical,
-            K::Horizontal => self.layout_horizontal,
-            K::VerticalCentered => self.layout_vertical_centered,
-            K::Indent => self.layout_indent,
-            // Until `layout_container`, `layout_panel` and
-            // `layout_central_panel` are drawn.
-            K::Container => self.menu_containers,
+            // Until `layout_stack`, `layout_stack_item`, `layout_grid_cell`,
+            // `layout_panel`, `layout_central_panel` and the chart icons
+            // are drawn.
+            K::Stack => self.layout_flex,
+            K::StackItem => self.layout_flex_item,
+            K::GridCell => self.layout_flex_grid,
             K::Panel => self.panel_views,
             K::CentralPanel => self.view_window,
             K::Grid => self.layout_grid,
             K::EndRow => self.layout_end_row,
             K::Collapsing => self.layout_collapsing,
             K::ScrollArea => self.layout_scroll_area,
-            K::Flex => self.layout_flex,
-            K::FlexItem | K::GridCell => self.layout_flex_item,
-            K::FlexGrid => self.layout_flex_grid,
+            K::Plot => self.menu_values,
+            K::PlotLine => self.widget_slider,
+            K::PlotPoints => self.widget_radio,
+            K::PlotHLine | K::PlotVLine => self.widget_separator,
+            K::PieChart => self.widget_spinner,
             K::RawCode => self.code_block,
         }
     }
 
     /// The icon of a node in the component tree: like its kind, but
-    /// multi-line text fields and comment-only code have their own.
+    /// multi-line text fields, stacks (by direction) and comment-only code
+    /// have their own.
     pub fn node(&self, node: &Node) -> IconId {
         match node.kind {
             WidgetKind::TextEdit if node.flag("multiline") => self.widget_text_area,
+            WidgetKind::Stack => match node.text("direction") {
+                "row" => self.layout_horizontal,
+                "column" if node.text("align") == "Center" => self.layout_vertical_centered,
+                "column" => self.layout_vertical,
+                _ => self.layout_flex,
+            },
             WidgetKind::RawCode
                 if node.text("code").lines().all(|l| {
                     let l = l.trim_start();
@@ -126,6 +134,7 @@ impl Icons {
             Category::Values => self.menu_values,
             Category::Input => self.menu_input,
             Category::Containers => self.menu_containers,
+            Category::Charts => self.menu_values,
             Category::Code => self.menu_code,
         }
     }

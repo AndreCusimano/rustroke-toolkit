@@ -17,14 +17,14 @@ mod sample;
 mod value;
 
 pub use kind::{
-    CONTENT_STYLE, Category, FLEX_ALIGN, FLEX_DIRECTIONS, FLEX_JUSTIFY, KindSpec, LAYOUT,
-    PANEL_SIDES, SCROLL_DIRECTIONS, SEPARATOR_ORIENTATIONS, STYLE, WidgetKind,
-    content_style_target,
+    CONTENT_STYLE, CORNERS, Category, JUSTIFY, KindSpec, LAYOUT, LINE_STYLES, MARKER_SHAPES,
+    PANEL_SIDES, SCROLL_DIRECTIONS, SEPARATOR_ORIENTATIONS, STACK_ALIGN, STACK_DIRECTIONS, STYLE,
+    WidgetKind, content_style_target,
 };
 pub use model::{BindingConflict, Field, Node, NodeId, Project, RawField, View, WindowSettings};
 pub use ops::EditError;
 pub use sample::sample_project;
 pub use value::{
-    FieldType, Font, FontFamily, Init, PropKind, PropSpec, Shadow, Track, Value, format_tracks,
-    parse_tracks,
+    FieldType, Font, FontFamily, Init, PropKind, PropSpec, Shadow, Sizing, Track, Value,
+    format_tracks, parse_tracks,
 };

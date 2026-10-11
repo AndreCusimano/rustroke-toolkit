@@ -46,41 +46,44 @@ pub enum WidgetKind {
     DatePicker,
     /// `ComboBox::from_label(label)` with one `selectable_value` per item
     ComboBox,
-    /// `ui.vertical(|ui| …)`
-    Vertical,
-    /// `Container::new().show(ui, |ui| …)`: background, border, margins,
-    /// size limits
-    Container,
+    /// `Stack::column().show(ui, |ui| …)`: a column, a row or an overlay
+    /// in a box (background, border, padding, size); without options,
+    /// the short forms `ui.vertical(|ui| …)` / `ui.horizontal(|ui| …)`
+    Stack,
+    /// `ui.stack_item(StackItem::new(), |ui| …)`, only inside a
+    /// [`WidgetKind::Stack`]: grow, size limits, alignment
+    StackItem,
     /// `Panel::left(id).show_inside(ui, |ui| …)`: a bar along one side of
     /// the space left
     Panel,
     /// `CentralPanel::default().show_inside(ui, |ui| …)`: all the space
     /// left after the panels
     CentralPanel,
-    /// `ui.horizontal(|ui| …)` / `horizontal_wrapped`
-    Horizontal,
-    /// `ui.vertical_centered(|ui| …)`
-    VerticalCentered,
-    /// `ui.indent(|ui| …)`
-    Indent,
     /// `Grid::new(id).show(ui, |ui| …)`
     Grid,
     /// `ui.end_row()`, only inside a [`WidgetKind::Grid`]
     EndRow,
+    /// `ui.grid_cell(GridCell::at(column, row), |ui| …)` or
+    /// `ui.grid_span(columns, rows, |ui| …)`, only inside a
+    /// [`WidgetKind::Grid`]
+    GridCell,
     /// `CollapsingHeader::new(text).show(ui, |ui| …)`
     Collapsing,
     /// `ScrollArea::vertical().show(ui, |ui| …)`
     ScrollArea,
-    /// `Flex::row(id).show(ui, |flex| …)`; children are [`WidgetKind::FlexItem`]s
-    Flex,
-    /// `flex.add(FlexItem::new(), |ui| …)`, only inside a [`WidgetKind::Flex`]
-    FlexItem,
-    /// `FlexGrid::new(id, columns).show(ui, |grid| …)`; children are
-    /// [`WidgetKind::GridCell`]s
-    FlexGrid,
-    /// `grid.add(GridCell::at(column, row), |ui| …)`, only inside a
-    /// [`WidgetKind::FlexGrid`]
-    GridCell,
+    /// `Plot::new(id).show(ui, |plot| …)`; children are series (and free
+    /// code)
+    Plot,
+    /// `plot.line(Line::new(&self.x))`, only inside a [`WidgetKind::Plot`]
+    PlotLine,
+    /// `plot.points(Points::new(&self.x))`, only inside a [`WidgetKind::Plot`]
+    PlotPoints,
+    /// `plot.hline(HLine::new(y))`, only inside a [`WidgetKind::Plot`]
+    PlotHLine,
+    /// `plot.vline(VLine::new(x))`, only inside a [`WidgetKind::Plot`]
+    PlotVLine,
+    /// `PieChart::new(self.x.clone()).show(ui)`
+    PieChart,
     /// Code the toolkit doesn't model, kept as written
     RawCode,
 }
@@ -98,18 +101,21 @@ pub enum Category {
     Input,
     /// Layout containers.
     Containers,
+    /// Plots and pie charts.
+    Charts,
     /// Free code.
     Code,
 }
 
 impl Category {
     /// Every category, in menu order.
-    pub const ALL: [Self; 6] = [
+    pub const ALL: [Self; 7] = [
         Self::Text,
         Self::Buttons,
         Self::Values,
         Self::Input,
         Self::Containers,
+        Self::Charts,
         Self::Code,
     ];
 
@@ -121,6 +127,7 @@ impl Category {
             Self::Values => "Values",
             Self::Input => "Input",
             Self::Containers => "Containers",
+            Self::Charts => "Charts",
             Self::Code => "Code",
         }
     }
@@ -488,18 +495,59 @@ macro_rules! container {
     };
 }
 
-const STYLED: &[PropSpec] = container!();
-const CONTAINER: &[PropSpec] = container!(
-    FILL,
-    STROKE,
-    CORNER_RADIUS,
-    g(STYLE, "shadow", "Shadow", PropKind::Shadow),
-    g(LAYOUT, "inner_margin", "Inner margin", PropKind::Size),
-    g(LAYOUT, "outer_margin", "Outer margin", PropKind::Size),
+/// Directions of a stack.
+pub const STACK_DIRECTIONS: &[&str] = &["column", "row", "overlay"];
+/// `Justify` variants.
+pub const JUSTIFY: &[&str] = &[
+    "Start",
+    "Center",
+    "End",
+    "SpaceBetween",
+    "SpaceAround",
+    "SpaceEvenly",
+];
+/// `StackAlign` variants.
+pub const STACK_ALIGN: &[&str] = &["Start", "Center", "End", "Stretch"];
+
+/// Box properties of stacks and grids, followed by [`CONTENT_STYLE`].
+macro_rules! boxed {
+    ($($prop:expr),* $(,)?) => {
+        container!(
+            $($prop,)*
+            FILL,
+            STROKE,
+            CORNER_RADIUS,
+            g(STYLE, "shadow", "Shadow", PropKind::Shadow),
+            g(LAYOUT, "padding", "Padding", PropKind::Size),
+            g(LAYOUT, "margin", "Margin", PropKind::Size),
+            g(LAYOUT, "width", "Width", PropKind::Sizing),
+            g(LAYOUT, "height", "Height", PropKind::Sizing),
+            MIN_SIZE,
+            MAX_SIZE,
+            g(LAYOUT, "clip", "Clip", BOOL),
+        )
+    };
+}
+
+const STACK: &[PropSpec] = boxed!(
+    p(
+        "direction",
+        "Direction",
+        PropKind::Choice(STACK_DIRECTIONS),
+        Init::Text("column"),
+    ),
+    p("gap", "Gap", SIZE, Init::None),
+    p("wrap", "Wrap", BOOL, Init::Bool(false)),
+    p("justify", "Justify", PropKind::Choice(JUSTIFY), Init::None),
+    p("align", "Align", PropKind::Choice(STACK_ALIGN), Init::None),
+);
+const STACK_ITEM: &[PropSpec] = container!(
+    p("grow", "Grow", SIZE, Init::None),
+    p("shrink", "Shrink", SIZE, Init::None),
+    p("basis", "Basis", SIZE, Init::None),
+    p("align", "Align", PropKind::Choice(STACK_ALIGN), Init::None),
     MIN_SIZE,
     MAX_SIZE,
-    flag(LAYOUT, "fill_width", "Fill width"),
-    flag(LAYOUT, "fill_height", "Fill height"),
 );
 /// Sides a panel can be on.
 pub const PANEL_SIDES: &[&str] = &["left", "right", "top", "bottom"];
@@ -518,11 +566,31 @@ const PANEL: &[PropSpec] = container!(
     g(LAYOUT, "margin", "Margin", SIZE),
 );
 const CENTRAL_PANEL: &[PropSpec] = container!(g(LAYOUT, "margin", "Margin", SIZE));
-const HORIZONTAL: &[PropSpec] = container!(p("wrapped", "Wrapped", BOOL, Init::Bool(false)));
-const GRID: &[PropSpec] = container!(
+const GRID: &[PropSpec] = boxed!(
     p("id", "Id", PropKind::IdSalt, Init::Text("grid")),
+    p("columns", "Columns", PropKind::Tracks, Init::None),
     p("striped", "Striped", BOOL, Init::Bool(false)),
     g(LAYOUT, "spacing", "Cell spacing", PropKind::Size),
+    p(
+        "align_x",
+        "Cell align x",
+        PropKind::Choice(STACK_ALIGN),
+        Init::None
+    ),
+    p(
+        "align_y",
+        "Cell align y",
+        PropKind::Choice(STACK_ALIGN),
+        Init::None
+    ),
+);
+const CELL_INDEX: PropKind = PropKind::Int { min: 0, max: 999 };
+const CELL_SPAN: PropKind = PropKind::Int { min: 1, max: 999 };
+const GRID_CELL: &[PropSpec] = container!(
+    p("column", "Column", CELL_INDEX, Init::None),
+    p("row", "Row", CELL_INDEX, Init::None),
+    p("column_span", "Columns spanned", CELL_SPAN, Init::Int(1)),
+    p("row_span", "Rows spanned", CELL_SPAN, Init::Int(1)),
 );
 const COLLAPSING: &[PropSpec] = container!(
     p("text", "Text", TEXT, Init::Text("Section")),
@@ -543,65 +611,92 @@ const SCROLL_AREA: &[PropSpec] = container!(
     g(LAYOUT, "max_height", "Max height", SIZE),
     g(LAYOUT, "max_width", "Max width", SIZE),
 );
-/// Directions of a flex container.
-pub const FLEX_DIRECTIONS: &[&str] = &["row", "column"];
-/// `FlexJustify` variants.
-pub const FLEX_JUSTIFY: &[&str] = &[
-    "Start",
-    "End",
-    "Center",
-    "SpaceBetween",
-    "SpaceAround",
-    "SpaceEvenly",
+/// `Corner` variants (plot legend).
+pub const CORNERS: &[&str] = &["TopLeft", "TopRight", "BottomLeft", "BottomRight"];
+/// `MarkerShape` variants.
+pub const MARKER_SHAPES: &[&str] = &["Circle", "Square", "Diamond", "Triangle", "Cross", "Plus"];
+/// Line styles of chart lines (`LineStyle::dashed()`…).
+pub const LINE_STYLES: &[&str] = &["solid", "dashed", "dotted"];
+const PLOT: &[PropSpec] = &[
+    p("id", "Id", PropKind::IdSalt, Init::Text("plot")),
+    p("x_label", "X axis title", TEXT, Init::None),
+    p("y_label", "Y axis title", TEXT, Init::None),
+    p("legend", "Legend", PropKind::Choice(CORNERS), Init::None),
+    p("crosshair", "Crosshair", BOOL, Init::Bool(true)),
+    p("tooltip", "Tooltip", BOOL, Init::Bool(true)),
+    p("allow_drag", "Drag to pan", BOOL, Init::Bool(true)),
+    p("allow_zoom", "Zoom", BOOL, Init::Bool(true)),
+    g(STYLE, "background", "Background", PropKind::Color),
+    g(LAYOUT, "width", "Width", SIZE),
+    g(LAYOUT, "height", "Height", SIZE),
 ];
-/// `FlexAlign` variants.
-pub const FLEX_ALIGN: &[&str] = &["Start", "End", "Center", "Stretch"];
-const FLEX: &[PropSpec] = &[
-    p("id", "Id", PropKind::IdSalt, Init::Text("flex")),
+const SERIES_NAME: PropSpec = p("name", "Name", TEXT, Init::None);
+const LINE_STYLE: PropSpec = PropSpec {
+    group: STYLE,
+    ..p(
+        "style",
+        "Line style",
+        PropKind::Choice(LINE_STYLES),
+        Init::Text("solid"),
+    )
+};
+const LINE_WIDTH: PropSpec = g(STYLE, "width", "Width", SIZE);
+const PLOT_LINE: &[PropSpec] = &[
     p(
-        "direction",
-        "Direction",
-        PropKind::Choice(FLEX_DIRECTIONS),
-        Init::Text("row"),
+        "binding",
+        "Binding",
+        PropKind::Binding(FieldType::Points),
+        Init::Text("series"),
     ),
-    p("wrap", "Wrap", BOOL, Init::Bool(false)),
-    p("gap", "Gap", SIZE, Init::None),
+    SERIES_NAME,
+    COLOR,
+    LINE_WIDTH,
+    LINE_STYLE,
+    g(STYLE, "fill", "Fill down to", ANY_FLOAT),
+    g(STYLE, "markers", "Markers", PropKind::Choice(MARKER_SHAPES)),
+    flag(STYLE, "mark_min_max", "Mark min and max"),
+];
+const PLOT_POINTS: &[PropSpec] = &[
     p(
-        "justify",
-        "Justify",
-        PropKind::Choice(FLEX_JUSTIFY),
+        "binding",
+        "Binding",
+        PropKind::Binding(FieldType::Points),
+        Init::Text("points"),
+    ),
+    SERIES_NAME,
+    COLOR,
+    g(STYLE, "radius", "Radius", SIZE),
+    g(STYLE, "shape", "Shape", PropKind::Choice(MARKER_SHAPES)),
+    PropSpec {
+        group: STYLE,
+        ..p("filled", "Filled", BOOL, Init::Bool(true))
+    },
+];
+const PLOT_REFERENCE: &[PropSpec] = &[
+    p("value", "Value", ANY_FLOAT, Init::Float(0.0)),
+    SERIES_NAME,
+    COLOR,
+    LINE_WIDTH,
+    LINE_STYLE,
+];
+const PIE_CHART: &[PropSpec] = &[
+    p(
+        "binding",
+        "Binding",
+        PropKind::Binding(FieldType::Slices),
+        Init::Text("slices"),
+    ),
+    p(
+        "donut",
+        "Donut hole",
+        PropKind::Float { min: 0.0, max: 0.9 },
         Init::None,
     ),
-    p("align", "Align", PropKind::Choice(FLEX_ALIGN), Init::None),
-    flag(LAYOUT, "fill_width", "Fill width"),
-    flag(LAYOUT, "fill_height", "Fill height"),
+    p("percentages", "Percentages", BOOL, Init::Bool(true)),
+    p("legend", "Legend", BOOL, Init::Bool(true)),
+    p("start_angle", "Start angle", ANY_FLOAT, Init::None),
+    g(LAYOUT, "diameter", "Diameter", SIZE),
 ];
-const FLEX_ITEM: &[PropSpec] = container!(
-    p("grow", "Grow", SIZE, Init::None),
-    p("shrink", "Shrink", SIZE, Init::None),
-    p("basis", "Basis", ANY_FLOAT, Init::None),
-    p("align", "Align", PropKind::Choice(FLEX_ALIGN), Init::None),
-    MIN_SIZE,
-    MAX_SIZE,
-);
-const FLEX_GRID: &[PropSpec] = &[
-    p("id", "Id", PropKind::IdSalt, Init::Text("flex_grid")),
-    p(
-        "columns",
-        "Columns",
-        PropKind::Tracks,
-        Init::Text("120, 1fr"),
-    ),
-    p("gap", "Gap", SIZE, Init::None),
-];
-const CELL_INDEX: PropKind = PropKind::Int { min: 0, max: 999 };
-const CELL_SPAN: PropKind = PropKind::Int { min: 1, max: 999 };
-const GRID_CELL: &[PropSpec] = container!(
-    p("column", "Column", CELL_INDEX, Init::Int(0)),
-    p("row", "Row", CELL_INDEX, Init::Int(0)),
-    p("column_span", "Columns spanned", CELL_SPAN, Init::Int(1)),
-    p("row_span", "Rows spanned", CELL_SPAN, Init::Int(1)),
-);
 const RAW_CODE: &[PropSpec] = &[p(
     "code",
     "Code",
@@ -631,21 +726,21 @@ impl WidgetKind {
         Self::TimePicker,
         Self::ColorPicker,
         Self::DatePicker,
-        Self::Vertical,
-        Self::Horizontal,
-        Self::VerticalCentered,
-        Self::Indent,
-        Self::Container,
+        Self::Stack,
+        Self::StackItem,
         Self::Panel,
         Self::CentralPanel,
         Self::Grid,
         Self::EndRow,
+        Self::GridCell,
         Self::Collapsing,
         Self::ScrollArea,
-        Self::Flex,
-        Self::FlexItem,
-        Self::FlexGrid,
-        Self::GridCell,
+        Self::Plot,
+        Self::PlotLine,
+        Self::PlotPoints,
+        Self::PlotHLine,
+        Self::PlotVLine,
+        Self::PieChart,
         Self::RawCode,
     ];
 
@@ -791,40 +886,19 @@ impl WidgetKind {
                 DATE_PICKER,
                 "A date, with a calendar."
             ),
-            Self::Vertical => spec!(
-                "Vertical",
+            Self::Stack => spec!(
+                "Stack",
                 Containers,
                 true,
-                STYLED,
-                "Stacks its widgets top to bottom."
+                STACK,
+                "Widgets in a column, a row or one over the other."
             ),
-            Self::Horizontal => spec!(
-                "Horizontal",
+            Self::StackItem => spec!(
+                "Stack item",
                 Containers,
                 true,
-                HORIZONTAL,
-                "Puts its widgets side by side."
-            ),
-            Self::VerticalCentered => spec!(
-                "Vertical centered",
-                Containers,
-                true,
-                STYLED,
-                "Stacks its widgets, centered."
-            ),
-            Self::Indent => spec!(
-                "Indent",
-                Containers,
-                true,
-                STYLED,
-                "Shifts its widgets to the right."
-            ),
-            Self::Container => spec!(
-                "Container",
-                Containers,
-                true,
-                CONTAINER,
-                "Background, border, margins and size limits."
+                STACK_ITEM,
+                "One item of a stack: grow, size limits, alignment."
             ),
             Self::Panel => spec!(
                 "Panel",
@@ -845,7 +919,7 @@ impl WidgetKind {
                 Containers,
                 true,
                 GRID,
-                "Aligns widgets in columns and rows."
+                "Columns and rows, in a box with a size."
             ),
             Self::EndRow => spec!(
                 "End of row",
@@ -868,33 +942,54 @@ impl WidgetKind {
                 SCROLL_AREA,
                 "Scrolls content larger than its area."
             ),
-            Self::Flex => spec!(
-                "Flex",
-                Containers,
-                true,
-                FLEX,
-                "Flexbox: rows or columns that wrap and grow."
-            ),
-            Self::FlexItem => spec!(
-                "Flex item",
-                Containers,
-                true,
-                FLEX_ITEM,
-                "One item of a flex, with its own grow."
-            ),
-            Self::FlexGrid => spec!(
-                "Flex grid",
-                Containers,
-                true,
-                FLEX_GRID,
-                "Columns of fixed or shared widths, cells that span."
-            ),
             Self::GridCell => spec!(
                 "Grid cell",
                 Containers,
                 true,
                 GRID_CELL,
-                "One cell of a flex grid: column, row, span."
+                "A grid cell spanning columns and rows, or placed."
+            ),
+            Self::Plot => spec!(
+                "Plot",
+                Charts,
+                true,
+                PLOT,
+                "A chart with axes; holds lines and points."
+            ),
+            Self::PlotLine => spec!(
+                "Line series",
+                Charts,
+                false,
+                PLOT_LINE,
+                "A line through points, optionally filled."
+            ),
+            Self::PlotPoints => spec!(
+                "Point series",
+                Charts,
+                false,
+                PLOT_POINTS,
+                "Points with markers (a scatter plot)."
+            ),
+            Self::PlotHLine => spec!(
+                "Horizontal line",
+                Charts,
+                false,
+                PLOT_REFERENCE,
+                "A line across the plot at a y value."
+            ),
+            Self::PlotVLine => spec!(
+                "Vertical line",
+                Charts,
+                false,
+                PLOT_REFERENCE,
+                "A line across the plot at an x value."
+            ),
+            Self::PieChart => spec!(
+                "Pie chart",
+                Charts,
+                false,
+                PIE_CHART,
+                "Slices of a whole, as a pie or a donut."
             ),
             Self::RawCode => spec!(
                 "Code",
@@ -925,13 +1020,22 @@ impl WidgetKind {
     /// of this kind (`None` = the view's top level).
     pub fn accepts(parent: Option<Self>, child: Self) -> bool {
         match (parent, child) {
-            (Some(Self::Flex), child) => child == Self::FlexItem,
-            (Some(Self::FlexGrid), child) => child == Self::GridCell,
+            (Some(Self::Plot), child) => child.is_series() || child == Self::RawCode,
+            (_, child) if child.is_series() => false,
             (Some(parent), _) if !parent.is_container() => false,
-            (Some(Self::Grid), _) => !matches!(child, Self::FlexItem | Self::GridCell),
-            (_, Self::EndRow | Self::FlexItem | Self::GridCell) => false,
+            (Some(Self::Grid), Self::EndRow | Self::GridCell) => true,
+            (Some(Self::Stack), Self::StackItem) => true,
+            (_, Self::EndRow | Self::GridCell | Self::StackItem) => false,
             _ => true,
         }
+    }
+
+    /// Whether this is a series of a [`WidgetKind::Plot`].
+    pub fn is_series(self) -> bool {
+        matches!(
+            self,
+            Self::PlotLine | Self::PlotPoints | Self::PlotHLine | Self::PlotVLine
+        )
     }
 }
 
@@ -975,16 +1079,23 @@ mod tests {
         use WidgetKind as K;
         assert!(K::accepts(None, K::Label));
         assert!(!K::accepts(None, K::EndRow));
-        assert!(!K::accepts(None, K::FlexItem));
+        assert!(!K::accepts(None, K::StackItem));
         assert!(K::accepts(Some(K::Grid), K::EndRow));
-        assert!(!K::accepts(Some(K::Vertical), K::EndRow));
-        assert!(K::accepts(Some(K::Flex), K::FlexItem));
-        assert!(!K::accepts(Some(K::Flex), K::Label));
-        assert!(K::accepts(Some(K::FlexItem), K::Label));
+        assert!(!K::accepts(Some(K::Stack), K::EndRow));
+        assert!(K::accepts(Some(K::Stack), K::StackItem));
+        assert!(K::accepts(Some(K::Stack), K::Label));
+        assert!(!K::accepts(Some(K::Grid), K::StackItem));
+        assert!(K::accepts(Some(K::StackItem), K::Label));
         assert!(!K::accepts(Some(K::Label), K::Label));
-        assert!(K::accepts(Some(K::FlexGrid), K::GridCell));
-        assert!(!K::accepts(Some(K::FlexGrid), K::Label));
+        assert!(K::accepts(Some(K::Grid), K::GridCell));
+        assert!(K::accepts(Some(K::Grid), K::Label));
         assert!(!K::accepts(None, K::GridCell));
         assert!(K::accepts(Some(K::GridCell), K::Label));
+        assert!(K::accepts(Some(K::Plot), K::PlotLine));
+        assert!(!K::accepts(Some(K::Plot), K::Label));
+        assert!(K::accepts(Some(K::Plot), K::RawCode));
+        assert!(!K::accepts(None, K::PlotPoints));
+        assert!(!K::accepts(Some(K::Stack), K::PlotHLine));
+        assert!(K::accepts(None, K::PieChart));
     }
 }

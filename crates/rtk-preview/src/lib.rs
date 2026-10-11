@@ -15,15 +15,16 @@ use std::collections::HashMap;
 use std::collections::BTreeMap;
 
 use rtk_document::{
-    CONTENT_STYLE, FieldType, Font, FontFamily, Node, NodeId, Track, Value, View, WidgetKind,
-    parse_tracks,
+    CONTENT_STYLE, FieldType, Font, FontFamily, Node, NodeId, Sizing, Track, Value, View,
+    WidgetKind, parse_tracks,
 };
 use rustroke::{
-    Button, CentralPanel, Checkbox, CollapsingHeader, Color, ColorPicker, ComboBox, Container,
-    Date, DatePicker, DragValue, Flex, FlexAlign, FlexGrid, FlexItem, FlexJustify, Grid, GridCell,
-    Hyperlink, Id, Label, Panel, ProgressBar, RadioButton, Rect, Response, ScrollArea, SearchField,
-    SelectableLabel, Sense, Separator, Shadow, Slider, Spinner, Stroke, TextEdit, TextStyle,
-    TimePicker, Ui, Vec2, Widget, vec2,
+    Axis, Button, CentralPanel, Checkbox, CollapsingHeader, Color, ColorPicker, ComboBox, Corner,
+    Date, DatePicker, DragValue, Grid, GridCell, HLine, Hyperlink, Id, Justify, Label, Line,
+    LineStyle, MarkerShape, Panel, PieChart, Plot, Points, ProgressBar, RadioButton, Rect,
+    Response, ScrollArea, SearchField, SelectableLabel, Sense, Separator, Shadow, Slider, Spinner,
+    Stack, StackAlign, StackItem, Stroke, TextEdit, TextStyle, TimePicker, Ui, VLine, Vec2, Widget,
+    vec2,
 };
 
 /// How the canvas behaves.
@@ -53,11 +54,42 @@ pub enum BindingValue {
     Color(Color),
     /// `Date`
     Date(Date),
+    /// `Vec<[f64; 2]>`
+    Points(Vec<[f64; 2]>),
+    /// `Vec<(String, f64)>`
+    Slices(Vec<(String, f64)>),
+}
+
+/// Example points for a chart series named `name` (different names give
+/// different curves), so a new chart shows something.
+pub fn sample_points(name: &str) -> Vec<[f64; 2]> {
+    let seed = name.bytes().map(f64::from).sum::<f64>();
+    (0..12)
+        .map(|i| {
+            let x = f64::from(i);
+            [x, 40.0 + 25.0 * (x * 0.6 + seed).sin() + x * 2.0]
+        })
+        .collect()
+}
+
+/// Example slices for a pie chart.
+pub fn sample_slices() -> Vec<(String, f64)> {
+    [
+        ("North", 42.0),
+        ("South", 28.0),
+        ("East", 18.0),
+        ("West", 12.0),
+    ]
+    .into_iter()
+    .map(|(name, value)| (name.to_owned(), value))
+    .collect()
 }
 
 /// The values of the view's fields, as the preview edits them. A field
 /// missing (or of another type) starts at its type's default, like the
-/// generated `#[derive(Default)]` struct.
+/// generated `#[derive(Default)]` struct; chart data starts with example
+/// values instead ([`sample_points`], [`sample_slices`]), so charts show
+/// something.
 #[derive(Clone, Debug, Default)]
 pub struct Bindings {
     values: HashMap<String, BindingValue>,
@@ -65,14 +97,18 @@ pub struct Bindings {
 
 macro_rules! binding_accessor {
     ($name:ident, $variant:ident, $ty:ty) => {
+        binding_accessor!($name, $variant, $ty, |_name: &str| Default::default());
+    };
+    ($name:ident, $variant:ident, $ty:ty, $init:expr) => {
         /// The field's value, created with the default if missing.
         pub fn $name(&mut self, name: &str) -> &mut $ty {
+            let init = $init;
             let entry = self
                 .values
                 .entry(name.to_owned())
-                .or_insert_with(|| BindingValue::$variant(Default::default()));
+                .or_insert_with(|| BindingValue::$variant(init(name)));
             if !matches!(entry, BindingValue::$variant(_)) {
-                *entry = BindingValue::$variant(Default::default());
+                *entry = BindingValue::$variant(init(name));
             }
             match entry {
                 BindingValue::$variant(value) => value,
@@ -90,6 +126,10 @@ impl Bindings {
     binding_accessor!(time_mut, Time, (u32, u32));
     binding_accessor!(color_mut, Color, Color);
     binding_accessor!(date_mut, Date, Date);
+    binding_accessor!(points_mut, Points, Vec<[f64; 2]>, sample_points);
+    binding_accessor!(slices_mut, Slices, Vec<(String, f64)>, |_: &str| {
+        sample_slices()
+    });
 
     /// The value of a field, if it was set.
     pub fn get(&self, name: &str) -> Option<&BindingValue> {
@@ -111,6 +151,8 @@ impl Bindings {
             FieldType::Time => BindingValue::Time((0, 0)),
             FieldType::Color => BindingValue::Color(Color::default()),
             FieldType::Date => BindingValue::Date(Date::default()),
+            FieldType::Points => BindingValue::Points(sample_points(name)),
+            FieldType::Slices => BindingValue::Slices(sample_slices()),
         };
         self.values.insert(name.to_owned(), value);
     }
@@ -260,6 +302,98 @@ macro_rules! frame {
     }};
 }
 
+/// Applies the box properties (background, border, padding, size…) of
+/// `$node` to the stack or grid `$widget`.
+macro_rules! boxed {
+    ($widget:expr, $node:expr) => {{
+        let mut widget = $widget;
+        if let Some(fill) = color_prop($node, "fill") {
+            widget = widget.fill(fill);
+        }
+        if let Some(stroke) = stroke_prop($node, "stroke") {
+            widget = widget.stroke(stroke);
+        }
+        if let Some(radius) = f32_prop($node, "corner_radius") {
+            widget = widget.corner_radius(radius);
+        }
+        if let Some(shadow) = shadow_prop($node, "shadow") {
+            widget = widget.shadow(shadow);
+        }
+        if let Some(padding) = size_prop($node, "padding") {
+            widget = widget.padding(padding);
+        }
+        if let Some(margin) = size_prop($node, "margin") {
+            widget = widget.margin(margin);
+        }
+        if let Some(width) = sizing_prop($node, "width") {
+            widget = widget.width(width);
+        }
+        if let Some(height) = sizing_prop($node, "height") {
+            widget = widget.height(height);
+        }
+        if let Some(size) = size_prop($node, "min_size") {
+            widget = widget.min_size(size);
+        }
+        if let Some(size) = size_prop($node, "max_size") {
+            widget = widget.max_size(size);
+        }
+        if let Some(clip) = $node.prop("clip").and_then(Value::as_bool) {
+            widget = widget.clip(clip);
+        }
+        widget
+    }};
+}
+
+/// Applies the name, color, width and line style of a chart series.
+macro_rules! series {
+    ($series:expr, $node:expr) => {{
+        let mut series = $series;
+        if let Some(name) = $node.prop("name").and_then(Value::as_text) {
+            series = series.name(name);
+        }
+        if let Some(color) = color_prop($node, "color") {
+            series = series.color(color);
+        }
+        series
+    }};
+}
+
+fn sizing_prop(node: &Node, key: &str) -> Option<rustroke::Sizing> {
+    Some(match node.prop(key).and_then(Value::as_sizing)? {
+        Sizing::Content => rustroke::Sizing::Content,
+        Sizing::Fill => rustroke::Sizing::Fill,
+        Sizing::Points(v) => rustroke::Sizing::Points(v as f32),
+    })
+}
+
+fn line_style(node: &Node) -> LineStyle {
+    match node.text("style") {
+        "dashed" => LineStyle::dashed(),
+        "dotted" => LineStyle::dotted(),
+        _ => LineStyle::Solid,
+    }
+}
+
+fn marker(name: &str) -> MarkerShape {
+    match name {
+        "Square" => MarkerShape::Square,
+        "Diamond" => MarkerShape::Diamond,
+        "Triangle" => MarkerShape::Triangle,
+        "Cross" => MarkerShape::Cross,
+        "Plus" => MarkerShape::Plus,
+        _ => MarkerShape::Circle,
+    }
+}
+
+fn corner(name: &str) -> Corner {
+    match name {
+        "TopLeft" => Corner::TopLeft,
+        "BottomLeft" => Corner::BottomLeft,
+        "BottomRight" => Corner::BottomRight,
+        _ => Corner::TopRight,
+    }
+}
+
 /// Adds `widget`, stretched to the node's fixed size if it has one.
 fn add(ui: &mut Ui<'_>, node: &Node, widget: impl Widget) -> Response {
     match size_prop(node, "fixed_size") {
@@ -289,24 +423,41 @@ pub fn apply_content_style(ui: &mut Ui<'_>, props: &BTreeMap<&'static str, Value
     }
 }
 
-fn justify(name: &str) -> FlexJustify {
+fn justify(name: &str) -> Justify {
     match name {
-        "End" => FlexJustify::End,
-        "Center" => FlexJustify::Center,
-        "SpaceBetween" => FlexJustify::SpaceBetween,
-        "SpaceAround" => FlexJustify::SpaceAround,
-        "SpaceEvenly" => FlexJustify::SpaceEvenly,
-        _ => FlexJustify::Start,
+        "End" => Justify::End,
+        "Center" => Justify::Center,
+        "SpaceBetween" => Justify::SpaceBetween,
+        "SpaceAround" => Justify::SpaceAround,
+        "SpaceEvenly" => Justify::SpaceEvenly,
+        _ => Justify::Start,
     }
 }
 
-fn align(name: &str) -> FlexAlign {
+fn align(name: &str) -> StackAlign {
     match name {
-        "End" => FlexAlign::End,
-        "Center" => FlexAlign::Center,
-        "Stretch" => FlexAlign::Stretch,
-        _ => FlexAlign::Start,
+        "End" => StackAlign::End,
+        "Center" => StackAlign::Center,
+        "Stretch" => StackAlign::Stretch,
+        _ => StackAlign::Start,
     }
+}
+
+fn align_prop(node: &Node, key: &str) -> Option<StackAlign> {
+    node.prop(key).and_then(Value::as_text).map(align)
+}
+
+/// Grid columns as rustroke tracks.
+fn tracks(text: &str) -> Vec<rustroke::Track> {
+    parse_tracks(text)
+        .unwrap_or_else(|_| vec![Track::Auto])
+        .into_iter()
+        .map(|t| match t {
+            Track::Points(v) => rustroke::Track::Points(v as f32),
+            Track::Fraction(v) => rustroke::Track::Fraction(v as f32),
+            Track::Auto => rustroke::Track::Auto,
+        })
+        .collect()
 }
 
 impl Painter<'_> {
@@ -406,7 +557,9 @@ impl Painter<'_> {
 
     fn node(&mut self, ui: &mut Ui<'_>, node: &Node) {
         let id = node.id;
-        if node.kind.is_container() {
+        // A plot takes drags and scrolls itself: its layer goes on top.
+        let on_top = !node.kind.is_container() || node.kind == WidgetKind::Plot;
+        if !on_top {
             // Registered before the children, so they get the clicks first.
             if let Some(rect) = self.prev_rects.get(&id).copied() {
                 self.overlay(ui, id, rect, "area");
@@ -665,25 +818,59 @@ impl Painter<'_> {
                     .response
                     .rect
             }
-            WidgetKind::Vertical => ui.vertical(|ui| self.children(ui, node)).response.rect,
-            WidgetKind::Container => {
-                let mut container = frame!(Container::new(), node);
-                if let Some(shadow) = shadow_prop(node, "shadow") {
-                    container = container.shadow(shadow);
+            WidgetKind::Stack => {
+                let mut stack = match node.text("direction") {
+                    "row" => Stack::row(),
+                    "overlay" => Stack::overlay(),
+                    _ => Stack::column(),
+                };
+                if let Some(gap) = f32_prop(node, "gap") {
+                    stack = stack.gap(gap);
                 }
-                if let Some(margin) = size_prop(node, "inner_margin") {
-                    container = container.inner_margin(margin);
+                if node.flag("wrap") {
+                    stack = stack.wrap(true);
                 }
-                if let Some(margin) = size_prop(node, "outer_margin") {
-                    container = container.outer_margin(margin);
+                if let Some(name) = node.prop("justify").and_then(Value::as_text) {
+                    stack = stack.justify(justify(name));
+                }
+                if let Some(align) = align_prop(node, "align") {
+                    stack = stack.align(align);
+                }
+                // Without options the code uses the short forms: draw
+                // those.
+                let plain = !node
+                    .props
+                    .keys()
+                    .any(|key| *key != "direction" && !CONTENT_STYLE.iter().any(|s| s.key == *key));
+                match node.text("direction") {
+                    "column" if plain => ui.vertical(|ui| self.children(ui, node)),
+                    "row" if plain => ui.horizontal(|ui| self.children(ui, node)),
+                    _ => boxed!(stack, node).show(ui, |ui| self.children(ui, node)),
+                }
+                .response
+                .rect
+            }
+            WidgetKind::StackItem => {
+                let mut item = StackItem::new();
+                if let Some(v) = f32_prop(node, "grow") {
+                    item = item.grow(v);
+                }
+                if let Some(v) = f32_prop(node, "shrink") {
+                    item = item.shrink(v);
+                }
+                if let Some(v) = f32_prop(node, "basis") {
+                    item = item.basis(v);
+                }
+                if let Some(align) = align_prop(node, "align") {
+                    item = item.align(align);
+                }
+                if let Some(size) = size_prop(node, "min_size") {
+                    item = item.min_size(size);
                 }
                 if let Some(size) = size_prop(node, "max_size") {
-                    container = container.max_size(size);
+                    item = item.max_size(size);
                 }
-                container
-                    .fill_width(node.flag("fill_width"))
-                    .fill_height(node.flag("fill_height"))
-                    .show(ui, |ui| self.children(ui, node))
+                ui.stack_item(item, |ui| self.children(ui, node))
                     .response
                     .rect
             }
@@ -727,26 +914,6 @@ impl Painter<'_> {
                 });
                 rect
             }
-            WidgetKind::Horizontal => {
-                if node.flag("wrapped") {
-                    ui.horizontal_wrapped(|ui| self.children(ui, node))
-                        .response
-                        .rect
-                } else {
-                    ui.horizontal(|ui| self.children(ui, node)).response.rect
-                }
-            }
-            WidgetKind::VerticalCentered => {
-                ui.vertical_centered(|ui| self.children(ui, node))
-                    .response
-                    .rect
-            }
-            WidgetKind::Indent => {
-                let before = ui.min_rect();
-                ui.indent(|ui| self.children(ui, node));
-                let after = ui.min_rect();
-                Rect::from_min_max(rustroke::point(after.min.x, before.max.y), after.max)
-            }
             WidgetKind::Grid => {
                 let mut grid = Grid::new(node.text("id"));
                 if node.flag("striped") {
@@ -755,7 +922,34 @@ impl Painter<'_> {
                 if let Some(spacing) = size_prop(node, "spacing") {
                     grid = grid.spacing(spacing);
                 }
-                grid.show(ui, |ui| self.children(ui, node)).response.rect
+                if let Some(columns) = node.prop("columns").and_then(Value::as_text) {
+                    grid = grid.columns(tracks(columns));
+                }
+                if let Some(align) = align_prop(node, "align_x") {
+                    grid = grid.align_x(align);
+                }
+                if let Some(align) = align_prop(node, "align_y") {
+                    grid = grid.align_y(align);
+                }
+                boxed!(grid, node)
+                    .show(ui, |ui| self.children(ui, node))
+                    .response
+                    .rect
+            }
+            WidgetKind::GridCell => {
+                let index = |key| usize_prop(node, key).map(|v| v.min(999) as u16);
+                let columns = index("column_span").unwrap_or(1).max(1);
+                let rows = index("row_span").unwrap_or(1).max(1);
+                match index("column") {
+                    Some(column) => {
+                        let cell =
+                            GridCell::at(column, index("row").unwrap_or(0)).span(columns, rows);
+                        ui.grid_cell(cell, |ui| self.children(ui, node))
+                    }
+                    None => ui.grid_span(columns, rows, |ui| self.children(ui, node)),
+                }
+                .response
+                .rect
             }
             WidgetKind::EndRow => {
                 ui.end_row();
@@ -794,109 +988,30 @@ impl Painter<'_> {
                 }
                 area.show(ui, |ui| self.children(ui, node)).response.rect
             }
-            WidgetKind::Flex => {
-                let mut flex = if node.text("direction") == "column" {
-                    Flex::column(node.text("id"))
-                } else {
-                    Flex::row(node.text("id"))
-                };
-                if node.flag("wrap") {
-                    flex = flex.wrap(true);
+            WidgetKind::Plot => self.plot(ui, node),
+            // Drawn by their plot (only reachable in an invalid tree).
+            WidgetKind::PlotLine
+            | WidgetKind::PlotPoints
+            | WidgetKind::PlotHLine
+            | WidgetKind::PlotVLine => Rect::NOTHING,
+            WidgetKind::PieChart => {
+                let mut pie = PieChart::new(self.bindings.slices_mut(&binding).clone());
+                if let Some(hole) = f32_prop(node, "donut") {
+                    pie = pie.donut(hole);
                 }
-                if let Some(gap) = f32_prop(node, "gap") {
-                    flex = flex.gap(gap);
+                if let Some(diameter) = f32_prop(node, "diameter") {
+                    pie = pie.diameter(diameter);
                 }
-                if let Some(name) = node.prop("justify").and_then(Value::as_text) {
-                    flex = flex.justify(justify(name));
+                if node.prop("percentages") == Some(&Value::Bool(false)) {
+                    pie = pie.percentages(false);
                 }
-                if let Some(name) = node.prop("align").and_then(Value::as_text) {
-                    flex = flex.align(align(name));
+                if node.prop("legend") == Some(&Value::Bool(false)) {
+                    pie = pie.legend(false);
                 }
-                if node.flag("fill_width") {
-                    flex = flex.fill_width(true);
+                if let Some(angle) = f32_prop(node, "start_angle") {
+                    pie = pie.start_angle(angle);
                 }
-                if node.flag("fill_height") {
-                    flex = flex.fill_height(true);
-                }
-                flex.show(ui, |flex| {
-                    if node.children.is_empty() {
-                        flex.add(FlexItem::new(), |ui| self.placeholder(ui, "Empty flex"));
-                    }
-                    for item in &node.children {
-                        let mut flex_item = FlexItem::new();
-                        if let Some(v) = f32_prop(item, "grow") {
-                            flex_item = flex_item.grow(v);
-                        }
-                        if let Some(v) = f32_prop(item, "shrink") {
-                            flex_item = flex_item.shrink(v);
-                        }
-                        if let Some(v) = f32_prop(item, "basis") {
-                            flex_item = flex_item.basis(v);
-                        }
-                        if let Some(name) = item.prop("align").and_then(Value::as_text) {
-                            flex_item = flex_item.align(align(name));
-                        }
-                        if let Some(size) = size_prop(item, "min_size") {
-                            flex_item = flex_item.min_size(size);
-                        }
-                        if let Some(size) = size_prop(item, "max_size") {
-                            flex_item = flex_item.max_size(size);
-                        }
-                        let item_id = item.id;
-                        if let Some(rect) = self.prev_rects.get(&item_id).copied() {
-                            self.overlay(flex.ui(), item_id, rect, "area");
-                        }
-                        let response = flex.add(flex_item, |ui| {
-                            ui.push_id(item_id.0, |ui| self.children(ui, item));
-                        });
-                        self.record(item, response.response.rect);
-                    }
-                })
-                .response
-                .rect
-            }
-            WidgetKind::FlexGrid => {
-                let columns: Vec<Track> =
-                    parse_tracks(node.text("columns")).unwrap_or_else(|_| vec![Track::Auto]);
-                let columns = columns
-                    .into_iter()
-                    .map(|t| match t {
-                        Track::Points(v) => rustroke::Track::Points(v as f32),
-                        Track::Fraction(v) => rustroke::Track::Fraction(v as f32),
-                        Track::Auto => rustroke::Track::Auto,
-                    })
-                    .collect();
-                let mut grid = FlexGrid::new(node.text("id"), columns);
-                if let Some(gap) = f32_prop(node, "gap") {
-                    grid = grid.gap(gap);
-                }
-                grid.show(ui, |grid| {
-                    if node.children.is_empty() {
-                        grid.add(GridCell::at(0, 0), |ui| {
-                            self.placeholder(ui, "Empty flex grid");
-                        });
-                    }
-                    for cell in &node.children {
-                        let at = |key| usize_prop(cell, key).unwrap_or(0).min(999) as u16;
-                        let place = GridCell::at(at("column"), at("row"))
-                            .span(at("column_span").max(1), at("row_span").max(1));
-                        let cell_id = cell.id;
-                        if let Some(rect) = self.prev_rects.get(&cell_id).copied() {
-                            self.overlay(grid.ui(), cell_id, rect, "area");
-                        }
-                        let response = grid.add(place, |ui| {
-                            ui.push_id(cell_id.0, |ui| self.children(ui, cell));
-                        });
-                        self.record(cell, response.response.rect);
-                    }
-                })
-                .response
-                .rect
-            }
-            // Only reachable when a FlexItem or a GridCell is drawn outside
-            // its container (an invalid tree): draw its content as a column.
-            WidgetKind::FlexItem | WidgetKind::GridCell => {
-                ui.vertical(|ui| self.children(ui, node)).response.rect
+                pie.show(ui).response.rect
             }
             WidgetKind::RawCode => {
                 let code = node.text("code");
@@ -921,9 +1036,110 @@ impl Painter<'_> {
             }
         };
         self.record(node, rect);
-        if !node.kind.is_container() {
+        if on_top {
             self.overlay(ui, id, rect, "widget");
         }
+    }
+}
+
+impl Painter<'_> {
+    /// A plot with its series; the series have no area of their own.
+    fn plot(&mut self, ui: &mut Ui<'_>, node: &Node) -> Rect {
+        let mut plot = Plot::new(node.text("id"));
+        if let Some(label) = node.prop("x_label").and_then(Value::as_text) {
+            plot = plot.x_axis(Axis::new().label(label));
+        }
+        if let Some(label) = node.prop("y_label").and_then(Value::as_text) {
+            plot = plot.y_axis(Axis::new().label(label));
+        }
+        if let Some(name) = node.prop("legend").and_then(Value::as_text) {
+            plot = plot.legend(corner(name));
+        }
+        for (key, set) in [
+            ("crosshair", Plot::crosshair as fn(Plot, bool) -> Plot),
+            ("tooltip", Plot::tooltip),
+            ("allow_drag", Plot::allow_drag),
+            ("allow_zoom", Plot::allow_zoom),
+        ] {
+            if node.prop(key) == Some(&Value::Bool(false)) {
+                plot = set(plot, false);
+            }
+        }
+        if let Some(color) = color_prop(node, "background") {
+            plot = plot.background(color);
+        }
+        if let Some(width) = f32_prop(node, "width") {
+            plot = plot.width(width);
+        }
+        if let Some(height) = f32_prop(node, "height") {
+            plot = plot.height(height);
+        }
+        // The data is copied first: the series borrow it for the plot's
+        // lifetime.
+        let data: Vec<Vec<[f64; 2]>> = node
+            .children
+            .iter()
+            .map(|series| match series.binding() {
+                Some((name, _)) => self.bindings.points_mut(name).clone(),
+                None => Vec::new(),
+            })
+            .collect();
+        plot.show(ui, |plot| {
+            for (series, points) in node.children.iter().zip(data) {
+                let width = f32_prop(series, "width");
+                match series.kind {
+                    WidgetKind::PlotLine => {
+                        let mut line = series!(Line::new(points), series).style(line_style(series));
+                        if let Some(width) = width {
+                            line = line.width(width);
+                        }
+                        if let Some(baseline) = series.prop("fill").and_then(Value::as_f64) {
+                            line = line.fill(baseline);
+                        }
+                        if let Some(shape) = series.prop("markers").and_then(Value::as_text) {
+                            line = line.markers(marker(shape));
+                        }
+                        if series.flag("mark_min_max") {
+                            line = line.mark_min_max(true);
+                        }
+                        plot.line(line);
+                    }
+                    WidgetKind::PlotPoints => {
+                        let mut dots = series!(Points::new(points), series);
+                        if let Some(radius) = f32_prop(series, "radius") {
+                            dots = dots.radius(radius);
+                        }
+                        if let Some(shape) = series.prop("shape").and_then(Value::as_text) {
+                            dots = dots.shape(marker(shape));
+                        }
+                        if series.prop("filled") == Some(&Value::Bool(false)) {
+                            dots = dots.filled(false);
+                        }
+                        plot.points(dots);
+                    }
+                    WidgetKind::PlotHLine | WidgetKind::PlotVLine => {
+                        let value = series.prop("value").and_then(Value::as_f64).unwrap_or(0.0);
+                        let style = line_style(series);
+                        if series.kind == WidgetKind::PlotHLine {
+                            let mut line = series!(HLine::new(value), series).style(style);
+                            if let Some(width) = width {
+                                line = line.width(width);
+                            }
+                            plot.hline(line);
+                        } else {
+                            let mut line = series!(VLine::new(value), series).style(style);
+                            if let Some(width) = width {
+                                line = line.width(width);
+                            }
+                            plot.vline(line);
+                        }
+                    }
+                    _ => {}
+                }
+            }
+        })
+        .response
+        .rect
     }
 }
 
@@ -1011,8 +1227,8 @@ fn flows_horizontally(view: &View, parent: Option<NodeId>) -> bool {
     let kind = parent.and_then(|id| view.node(id));
     match kind {
         Some(node) => match node.kind {
-            WidgetKind::Horizontal | WidgetKind::Grid | WidgetKind::FlexGrid => true,
-            WidgetKind::Flex => node.text("direction") != "column",
+            WidgetKind::Grid => true,
+            WidgetKind::Stack => node.text("direction") == "row",
             _ => false,
         },
         None => false,

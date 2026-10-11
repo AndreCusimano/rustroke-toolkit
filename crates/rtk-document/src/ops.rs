@@ -121,9 +121,8 @@ impl View {
     }
 
     /// Inserts `node` at `index` among the children of `parent` (`None` =
-    /// top level; the index is clamped). A node put directly in a
-    /// [`WidgetKind::Flex`] is wrapped in a new [`WidgetKind::FlexItem`].
-    /// Returns the id of the inserted node (the wrapper, if any).
+    /// top level; the index is clamped). Returns the id of the inserted
+    /// node.
     pub fn insert(
         &mut self,
         parent: Option<NodeId>,
@@ -131,33 +130,6 @@ impl View {
         node: Node,
     ) -> Result<NodeId, EditError> {
         let parent_kind = self.kind_of(parent)?;
-        let node = if parent_kind == Some(WidgetKind::Flex) && node.kind != WidgetKind::FlexItem {
-            let mut item = Node::new(self.alloc_id(), WidgetKind::FlexItem);
-            item.children.push(node);
-            item
-        } else if parent_kind == Some(WidgetKind::FlexGrid) && node.kind != WidgetKind::GridCell {
-            // In the cell after the last one, row by row.
-            let mut cell = Node::new(self.alloc_id(), WidgetKind::GridCell);
-            let grid = parent.and_then(|id| self.node(id)).expect("checked above");
-            let columns = crate::value::parse_tracks(grid.text("columns"))
-                .map_or(1, |t| t.len())
-                .max(1) as i64;
-            let next = grid
-                .children
-                .iter()
-                .map(|c| {
-                    let at = |key| c.prop(key).and_then(Value::as_int).unwrap_or(0);
-                    at("row") * columns + at("column") + 1
-                })
-                .max()
-                .unwrap_or(0);
-            cell.props.insert("column", Value::Int(next % columns));
-            cell.props.insert("row", Value::Int(next / columns));
-            cell.children.push(node);
-            cell
-        } else {
-            node
-        };
         if !WidgetKind::accepts(parent_kind, node.kind) {
             return Err(EditError::NotAccepted {
                 parent: parent_kind,
@@ -172,8 +144,7 @@ impl View {
     }
 
     /// Whether a node of `kind` can be inserted among the children of
-    /// `parent` (`None` = top level). A Flex accepts anything a FlexItem
-    /// accepts, since [`View::insert`] wraps it.
+    /// `parent` (`None` = top level).
     pub fn accepts_child(&self, parent: Option<NodeId>, kind: WidgetKind) -> bool {
         let parent_kind = match parent {
             None => None,
@@ -183,10 +154,6 @@ impl View {
             },
         };
         WidgetKind::accepts(parent_kind, kind)
-            || (parent_kind == Some(WidgetKind::Flex)
-                && WidgetKind::accepts(Some(WidgetKind::FlexItem), kind))
-            || (parent_kind == Some(WidgetKind::FlexGrid)
-                && WidgetKind::accepts(Some(WidgetKind::GridCell), kind))
     }
 
     /// Where a new node of `kind` goes when added from the menus: at the end
@@ -257,9 +224,7 @@ impl View {
             }
         }
         let parent_kind = self.kind_of(parent)?;
-        let wraps = (parent_kind == Some(WidgetKind::Flex) && node.kind != WidgetKind::FlexItem)
-            || (parent_kind == Some(WidgetKind::FlexGrid) && node.kind != WidgetKind::GridCell);
-        if !wraps && !WidgetKind::accepts(parent_kind, node.kind) {
+        if !WidgetKind::accepts(parent_kind, node.kind) {
             return Err(EditError::NotAccepted {
                 parent: parent_kind,
                 child: node.kind,
@@ -302,7 +267,6 @@ impl View {
             });
             copy.props.insert("value", Value::Int(max + 1));
         }
-        // Inside a Flex the node is a FlexItem, so it is never wrapped again.
         self.insert(parent, index + 1, copy)
     }
 
@@ -497,19 +461,22 @@ mod tests {
     }
 
     #[test]
-    fn insert_checks_containment_and_wraps_flex_children() {
-        let (mut view, ids) = view_with(&[K::Flex, K::Label]);
+    fn insert_checks_containment() {
+        let (mut view, ids) = view_with(&[K::Plot, K::Label, K::Stack]);
         let end_row = view.create(K::EndRow);
         assert!(matches!(
             view.insert(None, 0, end_row),
             Err(EditError::NotAccepted { .. })
         ));
         let label = view.create(K::Label);
-        let item = view.insert(Some(ids[0]), 0, label).unwrap();
-        let flex = view.node(ids[0]).unwrap();
-        assert_eq!(flex.children[0].kind, K::FlexItem);
-        assert_eq!(flex.children[0].id, item);
-        assert_eq!(flex.children[0].children[0].kind, K::Label);
+        assert!(
+            view.insert(Some(ids[0]), 0, label).is_err(),
+            "a plot only holds series"
+        );
+        let line = view.create(K::PlotLine);
+        view.insert(Some(ids[0]), 0, line).unwrap();
+        let item = view.create(K::StackItem);
+        view.insert(Some(ids[2]), 0, item).unwrap();
         let child = view.create(K::Button);
         assert!(
             view.insert(Some(ids[1]), 0, child).is_err(),
@@ -519,11 +486,11 @@ mod tests {
 
     #[test]
     fn move_within_and_between_parents() {
-        let (mut view, ids) = view_with(&[K::Label, K::Button, K::Vertical, K::Separator]);
+        let (mut view, ids) = view_with(&[K::Label, K::Button, K::Stack, K::Separator]);
         // Drop the label between the button and the vertical (index 2 before removal).
         view.move_node(ids[0], None, 2).unwrap();
         let kinds: Vec<_> = view.nodes.iter().map(|n| n.kind).collect();
-        assert_eq!(kinds, [K::Button, K::Label, K::Vertical, K::Separator]);
+        assert_eq!(kinds, [K::Button, K::Label, K::Stack, K::Separator]);
         view.move_node(ids[3], Some(ids[2]), 0).unwrap();
         assert_eq!(view.parent(ids[3]), Some(Some(ids[2])));
         assert_eq!(
@@ -554,8 +521,8 @@ mod tests {
 
     #[test]
     fn insertion_points() {
-        let (mut view, ids) = view_with(&[K::Label, K::Grid, K::Flex]);
-        let (label, grid, flex) = (ids[0], ids[1], ids[2]);
+        let (mut view, ids) = view_with(&[K::Label, K::Grid, K::Plot]);
+        let (label, grid, plot) = (ids[0], ids[1], ids[2]);
         assert_eq!(view.insertion_point(None, K::Button), Some((None, 3)));
         assert_eq!(
             view.insertion_point(Some(label), K::Button),
@@ -570,29 +537,20 @@ mod tests {
             view.insertion_point(Some(grid), K::EndRow),
             Some((Some(grid), 0))
         );
-        assert_eq!(
-            view.insertion_point(Some(flex), K::Button),
-            Some((Some(flex), 0))
-        );
-        // Inside a grid cell an end of row goes after the cell.
+        // A widget selected in a grid: an end of row goes after it.
         let cell = view.create(K::Label);
         let cell = view.insert(Some(grid), 0, cell).unwrap();
         assert_eq!(
             view.insertion_point(Some(cell), K::EndRow),
             Some((Some(grid), 1))
         );
-        // From a flex item's content, an item goes into the flex after it.
-        let content = view.create(K::Label);
-        let item = view.insert(Some(flex), 0, content).unwrap();
-        let content = view.node(item).unwrap().children[0].id;
+        // A plot takes series; other widgets go after it.
         assert_eq!(
-            view.insertion_point(Some(content), K::Button),
-            Some((Some(item), 1))
+            view.insertion_point(Some(plot), K::PlotLine),
+            Some((Some(plot), 0))
         );
-        assert_eq!(
-            view.insertion_point(Some(content), K::FlexItem),
-            Some((Some(flex), 1))
-        );
+        assert_eq!(view.insertion_point(Some(plot), K::Button), Some((None, 3)));
+        assert_eq!(view.insertion_point(Some(label), K::PlotPoints), None);
     }
 
     #[test]

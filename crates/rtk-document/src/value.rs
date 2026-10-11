@@ -26,6 +26,19 @@ pub enum Value {
     Font(Font),
     /// A drop shadow (`Shadow { offset, blur, spread, color }`).
     Shadow(Shadow),
+    /// The width or height of a box (`Sizing::Content`, `Fill`, `Points`).
+    Sizing(Sizing),
+}
+
+/// How big a box is along one axis.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub enum Sizing {
+    /// As big as its content.
+    Content,
+    /// All the available space (`.fill_width()` / `.fill_height()`).
+    Fill,
+    /// Exactly this many points (`Sizing::Points(n)`).
+    Points(f64),
 }
 
 /// A drop shadow behind a container.
@@ -194,6 +207,14 @@ impl Value {
         }
     }
 
+    /// The sizing, if this is one.
+    pub fn as_sizing(&self) -> Option<Sizing> {
+        match self {
+            Self::Sizing(s) => Some(*s),
+            _ => None,
+        }
+    }
+
     /// The shadow, if this is one.
     pub fn as_shadow(&self) -> Option<Shadow> {
         match self {
@@ -203,7 +224,7 @@ impl Value {
     }
 }
 
-/// Parses a list of [`FlexGrid`](https://docs.rs/rustroke) column tracks
+/// Parses a list of grid column tracks
 /// written like `120, 1fr, auto`: points, shares of the free space (`fr`)
 /// or `auto`.
 pub fn parse_tracks(text: &str) -> Result<Vec<Track>, String> {
@@ -254,7 +275,7 @@ pub fn format_tracks(tracks: &[Track]) -> String {
         .join(", ")
 }
 
-/// The size of one column of a flex grid.
+/// The width of one column of a grid.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub enum Track {
     /// Fixed, in points (`Track::Points`).
@@ -282,6 +303,10 @@ pub enum FieldType {
     Color,
     /// `Date`
     Date,
+    /// `Vec<[f64; 2]>`: the points of a chart series.
+    Points,
+    /// `Vec<(String, f64)>`: the slices of a pie chart.
+    Slices,
 }
 
 impl FieldType {
@@ -295,6 +320,8 @@ impl FieldType {
             Self::Time => "(u32, u32)",
             Self::Color => "Color",
             Self::Date => "Date",
+            Self::Points => "Vec<[f64; 2]>",
+            Self::Slices => "Vec<(String, f64)>",
         }
     }
 
@@ -308,6 +335,8 @@ impl FieldType {
             "(u32, u32)" => Some(Self::Time),
             "Color" => Some(Self::Color),
             "Date" => Some(Self::Date),
+            "Vec<[f64; 2]>" => Some(Self::Points),
+            "Vec<(String, f64)>" => Some(Self::Slices),
             _ => None,
         }
     }
@@ -359,8 +388,10 @@ pub enum PropKind {
     Stroke,
     /// A text style.
     Font,
-    /// Flex grid columns, as text (see [`parse_tracks`]).
+    /// Grid columns, as text (see [`parse_tracks`]).
     Tracks,
+    /// The width or height of a box.
+    Sizing,
 }
 
 impl PropKind {
@@ -389,6 +420,10 @@ impl PropKind {
                     .all(|v| v.is_finite())
                     && s.blur >= 0.0
             }
+            (Self::Sizing, Value::Sizing(s)) => match s {
+                Sizing::Points(v) => v.is_finite() && *v >= 0.0,
+                _ => true,
+            },
             (Self::Stroke, Value::Stroke(w, _)) => w.is_finite() && *w >= 0.0,
             (Self::Font, Value::Font(f)) => {
                 f.size.is_finite() && f.size > 0.0 && (1..=1000).contains(&f.weight)

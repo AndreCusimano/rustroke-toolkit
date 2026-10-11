@@ -14,11 +14,11 @@ use quote::{format_ident, quote};
 use crate::builders::{Arg, builder_methods};
 use crate::kind::{CONTENT_STYLE, WidgetKind, content_style_target};
 use crate::model::{Node, Project, View};
-use crate::value::{FieldType, Font, Shadow, Track, Value, parse_tracks};
+use crate::value::{FieldType, Font, Shadow, Sizing, Track, Value, parse_tracks};
 
 /// The rustroke version the generated code targets (`major.minor`). The
 /// toolkit's own major version changes when this does.
-pub const RUSTROKE_VERSION: &str = "0.19";
+pub const RUSTROKE_VERSION: &str = "0.20";
 
 /// Start of the first line of every generated view file; the parser drops
 /// lines starting with it, whatever toolkit version wrote them.
@@ -37,6 +37,7 @@ pub fn header() -> String {
 /// a file's `use rustroke::{…}` are kept as they are (see
 /// [`View::extra_imports`]).
 pub const MANAGED_IMPORTS: &[&str] = &[
+    "Axis",
     "Button",
     "CentralPanel",
     "Checkbox",
@@ -44,20 +45,23 @@ pub const MANAGED_IMPORTS: &[&str] = &[
     "Color",
     "ColorPicker",
     "ComboBox",
-    "Container",
+    "Corner",
     "Date",
     "DatePicker",
     "DragValue",
-    "Flex",
-    "FlexAlign",
-    "FlexGrid",
-    "FlexItem",
-    "FlexJustify",
     "Grid",
     "GridCell",
+    "HLine",
     "Hyperlink",
+    "Justify",
     "Label",
+    "Line",
+    "LineStyle",
+    "MarkerShape",
     "Panel",
+    "PieChart",
+    "Plot",
+    "Points",
     "ProgressBar",
     "RadioButton",
     "ScrollArea",
@@ -65,8 +69,12 @@ pub const MANAGED_IMPORTS: &[&str] = &[
     "SelectableLabel",
     "Separator",
     "Shadow",
+    "Sizing",
     "Slider",
     "Spinner",
+    "Stack",
+    "StackAlign",
+    "StackItem",
     "Stroke",
     "TextEdit",
     "TextStyle",
@@ -74,6 +82,7 @@ pub const MANAGED_IMPORTS: &[&str] = &[
     "Track",
     "Ui",
     "UiRoot",
+    "VLine",
     "Window",
     "WindowOptions",
     "vec2",
@@ -172,6 +181,26 @@ impl Gen {
         out
     }
 
+    /// `vec![Track::Points(120.0), Track::Fraction(1.0), Track::Auto]`
+    fn tracks(&mut self, text: &str) -> TokenStream {
+        let track = self.import("Track");
+        let tracks = parse_tracks(text)
+            .unwrap_or_else(|_| vec![Track::Auto])
+            .into_iter()
+            .map(|t| match t {
+                Track::Points(v) => {
+                    let v = f32_lit(v);
+                    quote!(#track::Points(#v))
+                }
+                Track::Fraction(v) => {
+                    let v = f32_lit(v);
+                    quote!(#track::Fraction(#v))
+                }
+                Track::Auto => quote!(#track::Auto),
+            });
+        quote!(vec![#(#tracks),*])
+    }
+
     /// The builder calls `.method(value)` for the node's properties, in
     /// [`builder_methods`] order.
     fn builders(&mut self, node: &Node) -> TokenStream {
@@ -194,6 +223,35 @@ impl Gen {
                         continue;
                     }
                     quote!(.#method(#b))
+                }
+                (Arg::Fill, Value::Sizing(Sizing::Fill)) => quote!(.#method()),
+                (Arg::Sizing, Value::Sizing(sizing)) => match sizing {
+                    Sizing::Content => {
+                        let ty = self.import("Sizing");
+                        quote!(.#method(#ty::Content))
+                    }
+                    Sizing::Points(v) => {
+                        let ty = self.import("Sizing");
+                        let v = f32_lit(*v);
+                        quote!(.#method(#ty::Points(#v)))
+                    }
+                    Sizing::Fill => continue,
+                },
+                (Arg::Tracks, Value::Text(text)) => {
+                    let tracks = self.tracks(text);
+                    quote!(.#method(#tracks))
+                }
+                (Arg::AxisLabel, Value::Text(text)) => {
+                    let axis = self.import("Axis");
+                    quote!(.#method(#axis::new().label(#text)))
+                }
+                (Arg::LineStyle, Value::Text(style)) => {
+                    if style == "solid" {
+                        continue;
+                    }
+                    let ty = self.import("LineStyle");
+                    let ctor = format_ident!("{style}");
+                    quote!(.#method(#ty::#ctor()))
                 }
                 (Arg::Str, Value::Text(text)) => quote!(.#method(#text)),
                 (Arg::Float, v) => match v.as_f64() {
@@ -469,26 +527,6 @@ impl Gen {
                 };
                 quote!(#combo::from_label(#label) #calls .selected_text(#selected).show_ui(#ui, |#param| { #(#options)* });)
             }
-            WidgetKind::Vertical => {
-                let body = self.styled_closure("ui", node);
-                quote!(#ui.vertical(#body);)
-            }
-            WidgetKind::Horizontal => {
-                let body = self.styled_closure("ui", node);
-                if node.flag("wrapped") {
-                    quote!(#ui.horizontal_wrapped(#body);)
-                } else {
-                    quote!(#ui.horizontal(#body);)
-                }
-            }
-            WidgetKind::VerticalCentered => {
-                let body = self.styled_closure("ui", node);
-                quote!(#ui.vertical_centered(#body);)
-            }
-            WidgetKind::Indent => {
-                let body = self.styled_closure("ui", node);
-                quote!(#ui.indent(#body);)
-            }
             WidgetKind::Grid => {
                 let grid = self.import("Grid");
                 let id = node.text("id");
@@ -497,6 +535,29 @@ impl Gen {
                 quote!(#grid::new(#id) #calls .show(#ui, #body);)
             }
             WidgetKind::EndRow => quote!(#ui.end_row();),
+            WidgetKind::GridCell => {
+                let index = |key| {
+                    let v = node.prop(key).and_then(Value::as_int);
+                    v.map(|v| v.clamp(0, i64::from(u16::MAX)) as u16)
+                };
+                let columns = index("column_span").unwrap_or(1).max(1);
+                let rows = index("row_span").unwrap_or(1).max(1);
+                let [columns_lit, rows_lit] = [columns, rows].map(Literal::u16_unsuffixed);
+                let body = self.styled_closure("ui", node);
+                match index("column") {
+                    Some(column) => {
+                        let cell = self.import("GridCell");
+                        let row = index("row").unwrap_or(0);
+                        let [column, row] = [column, row].map(Literal::u16_unsuffixed);
+                        let mut chain = quote!(#cell::at(#column, #row));
+                        if (columns, rows) != (1, 1) {
+                            chain = quote!(#chain.span(#columns_lit, #rows_lit));
+                        }
+                        quote!(#ui.grid_cell(#chain, #body);)
+                    }
+                    None => quote!(#ui.grid_span(#columns_lit, #rows_lit, #body);),
+                }
+            }
             WidgetKind::Collapsing => {
                 let calls = self.builders(node);
                 let body = self.styled_closure("ui", node);
@@ -507,11 +568,25 @@ impl Gen {
                     quote!(#header::new(#text) #calls .show(#ui, #body);)
                 }
             }
-            WidgetKind::Container => {
-                let container = self.import("Container");
+            WidgetKind::Stack => {
                 let calls = self.builders(node);
                 let body = self.styled_closure("ui", node);
-                quote!(#container::new() #calls .show(#ui, #body);)
+                // Without options, the short forms.
+                match node.text("direction") {
+                    "column" if calls.is_empty() => quote!(#ui.vertical(#body);),
+                    "row" if calls.is_empty() => quote!(#ui.horizontal(#body);),
+                    direction => {
+                        let stack = self.import("Stack");
+                        let direction = format_ident!("{direction}");
+                        quote!(#stack::#direction() #calls .show(#ui, #body);)
+                    }
+                }
+            }
+            WidgetKind::StackItem => {
+                let item = self.import("StackItem");
+                let calls = self.builders(node);
+                let body = self.styled_closure("ui", node);
+                quote!(#ui.stack_item(#item::new() #calls, #body);)
             }
             WidgetKind::Panel => {
                 let panel = self.import("Panel");
@@ -534,58 +609,36 @@ impl Gen {
                 let body = self.styled_closure("ui", node);
                 quote!(#area::#direction() #calls .show(#ui, #body);)
             }
-            WidgetKind::Flex => {
-                let flex = self.import("Flex");
-                let direction = format_ident!("{}", node.text("direction"));
+            WidgetKind::Plot => {
+                let plot = self.import("Plot");
                 let id = node.text("id");
                 let calls = self.builders(node);
-                let body = self.closure("flex", &node.children);
-                quote!(#flex::#direction(#id) #calls .show(#ui, #body);)
+                let body = self.closure("plot", &node.children);
+                quote!(#plot::new(#id) #calls .show(#ui, #body);)
             }
-            WidgetKind::FlexItem => {
-                let item = self.import("FlexItem");
-                let calls = self.builders(node);
-                let body = self.styled_closure("ui", node);
-                quote!(#ui.add(#item::new() #calls, #body);)
-            }
-            WidgetKind::FlexGrid => {
-                let grid = self.import("FlexGrid");
-                let id = node.text("id");
-                let track = self.import("Track");
-                let tracks = parse_tracks(node.text("columns"))
-                    .unwrap_or_else(|_| vec![Track::Auto])
-                    .into_iter()
-                    .map(|t| match t {
-                        Track::Points(v) => {
-                            let v = f32_lit(v);
-                            quote!(#track::Points(#v))
-                        }
-                        Track::Fraction(v) => {
-                            let v = f32_lit(v);
-                            quote!(#track::Fraction(#v))
-                        }
-                        Track::Auto => quote!(#track::Auto),
-                    });
-                let calls = self.builders(node);
-                let body = self.closure("grid", &node.children);
-                quote!(#grid::new(#id, vec![#(#tracks),*]) #calls .show(#ui, #body);)
-            }
-            WidgetKind::GridCell => {
-                let cell = self.import("GridCell");
-                let index = |key| {
-                    let v = node.prop(key).and_then(Value::as_int).unwrap_or(0);
-                    v.clamp(0, i64::from(u16::MAX)) as u16
+            WidgetKind::PlotLine | WidgetKind::PlotPoints => {
+                let (method, ty) = if node.kind == WidgetKind::PlotLine {
+                    (format_ident!("line"), self.import("Line"))
+                } else {
+                    (format_ident!("points"), self.import("Points"))
                 };
-                let (column, row) = (index("column"), index("row"));
-                let (columns, rows) = (index("column_span").max(1), index("row_span").max(1));
-                let [column, row, columns_lit, rows_lit] =
-                    [column, row, columns, rows].map(Literal::u16_unsuffixed);
-                let mut chain = quote!(#cell::at(#column, #row));
-                if (columns, rows) != (1, 1) {
-                    chain = quote!(#chain.span(#columns_lit, #rows_lit));
-                }
-                let body = self.styled_closure("ui", node);
-                quote!(#ui.add(#chain, #body);)
+                let calls = self.builders(node);
+                quote!(#ui.#method(#ty::new(&self.#binding) #calls);)
+            }
+            WidgetKind::PlotHLine | WidgetKind::PlotVLine => {
+                let (method, ty) = if node.kind == WidgetKind::PlotHLine {
+                    (format_ident!("hline"), self.import("HLine"))
+                } else {
+                    (format_ident!("vline"), self.import("VLine"))
+                };
+                let value = float(node, "value").unwrap_or_else(|| Literal::f32_unsuffixed(0.0));
+                let calls = self.builders(node);
+                quote!(#ui.#method(#ty::new(#value) #calls);)
+            }
+            WidgetKind::PieChart => {
+                let pie = self.import("PieChart");
+                let calls = self.builders(node);
+                quote!(#pie::new(self.#binding.clone()) #calls .show(#ui);)
             }
             WidgetKind::RawCode => self.raw(node.text("code")),
             // Drawn by `leaf`.
@@ -609,7 +662,7 @@ fn int(node: &Node, key: &str) -> Option<Literal> {
 }
 
 /// Whether `code` contains `name` as a whole identifier.
-fn mentions(code: &str, name: &str) -> bool {
+pub(crate) fn mentions(code: &str, name: &str) -> bool {
     let is_ident = |c: char| c.is_alphanumeric() || c == '_';
     code.match_indices(name).any(|(i, _)| {
         !code[..i].ends_with(is_ident) && !code[i + name.len()..].starts_with(is_ident)
@@ -898,7 +951,10 @@ mod tests {
             "on_click",
             Value::Text("// Count clicks.\nself.clicks += 1;\nif self.clicks > 3 {\n    self.clicks = 0;\n}".into()),
         );
-        let mut horizontal = view.create(K::Horizontal);
+        let mut horizontal = view.create(K::Stack);
+        horizontal
+            .props
+            .insert("direction", Value::Text("row".into()));
         horizontal.children.push(button);
         view.insert(None, 0, horizontal).unwrap();
         let code = view_code(&view);

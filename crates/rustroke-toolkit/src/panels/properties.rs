@@ -8,8 +8,8 @@ use std::collections::HashMap;
 
 use rtk_document::names::check_snake_case;
 use rtk_document::{
-    CONTENT_STYLE, Font, FontFamily, NodeId, PropKind, PropSpec, Shadow, Value, WindowSettings,
-    parse_tracks,
+    CONTENT_STYLE, Font, FontFamily, NodeId, PropKind, PropSpec, Shadow, Sizing, Value,
+    WindowSettings, parse_tracks,
 };
 use rustroke::{
     Checkbox, ColorPicker, ComboBox, DragValue, Id, Label, PropertyGrid, PropertyGridUi,
@@ -197,6 +197,59 @@ fn prop_editor(
             let new = text_field(ui, lines, buffers, key, &text, |_| Ok(()))?;
             let items = new.lines().map(str::to_owned).collect();
             Some(Some(Value::Items(items)))
+        }
+        PropKind::Bool if optional => {
+            // Unset, on or off.
+            let value = current.and_then(Value::as_bool);
+            let name = |v: Option<bool>| match v {
+                None => "(default)",
+                Some(true) => "On",
+                Some(false) => "Off",
+            };
+            let mut choice = value;
+            ComboBox::from_id_salt(("flag", id.0, spec.key))
+                .selected_text(name(value))
+                .width(width)
+                .show_ui(ui, |ui| {
+                    for v in [None, Some(true), Some(false)] {
+                        ui.selectable_value(&mut choice, v, name(v));
+                    }
+                });
+            (choice != value).then(|| choice.map(Value::Bool))
+        }
+        PropKind::Sizing => {
+            ui.horizontal(|ui| {
+                if let Some(toggled) = set_toggle(ui, spec, current, || Value::Sizing(Sizing::Fill))
+                {
+                    return Some(toggled);
+                }
+                let sizing = current.and_then(Value::as_sizing)?;
+                let name = |s: Sizing| match s {
+                    Sizing::Content => "Content",
+                    Sizing::Fill => "Fill",
+                    Sizing::Points(_) => "Points",
+                };
+                let points = match sizing {
+                    Sizing::Points(v) => v,
+                    _ => 200.0,
+                };
+                let mut choice = sizing;
+                ComboBox::from_id_salt(("sizing", id.0, spec.key))
+                    .selected_text(name(sizing))
+                    .width(80.0)
+                    .show_ui(ui, |ui| {
+                        for s in [Sizing::Content, Sizing::Fill, Sizing::Points(points)] {
+                            ui.selectable_value(&mut choice, s, name(s));
+                        }
+                    });
+                if let Sizing::Points(mut v) = choice
+                    && size_drag(ui, &mut v)
+                {
+                    choice = Sizing::Points(v);
+                }
+                (choice != sizing).then_some(Some(Value::Sizing(choice)))
+            })
+            .inner
         }
         PropKind::Bool => {
             let mut value = current.and_then(Value::as_bool).unwrap_or(false);

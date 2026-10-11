@@ -13,7 +13,7 @@ pub(crate) enum Arg {
     /// An integer literal.
     Int,
     /// `true` / `false`; written only when it differs from the property's
-    /// initial value.
+    /// initial value (always, for an optional property that is set).
     Bool,
     /// No argument: sets the property to `true` (`.no_wrap()`).
     Flag,
@@ -33,6 +33,19 @@ pub(crate) enum Arg {
     Font,
     /// `Shadow { offset: vec2(x, y), blur, spread, color }`
     Shadow,
+    /// `Sizing::Content` / `Sizing::Points(n)` (`Fill` is written with
+    /// [`Arg::Fill`])
+    Sizing,
+    /// No argument: sets the sizing property to `Sizing::Fill`
+    /// (`.fill_width()`).
+    Fill,
+    /// `vec![Track::Points(120.0), Track::Fraction(1.0), Track::Auto]`
+    Tracks,
+    /// `Axis::new().label("title")`
+    AxisLabel,
+    /// `LineStyle::dashed()` / `LineStyle::dotted()`; written only when it
+    /// differs from the property's initial value.
+    LineStyle,
     /// Read but not kept (derived from other properties).
     Ignore,
 }
@@ -49,6 +62,33 @@ pub(crate) fn builder_methods(kind: WidgetKind) -> &'static [(&'static str, &'st
     ];
     const TEXT: [(&str, &str, Arg); 2] =
         [("text_color", "text_color", Color), ("font", "font", Font)];
+    /// The box of a stack or a grid.
+    macro_rules! boxed {
+        ($($item:expr),* $(,)?) => {
+            &[
+                $($item,)*
+                ("fill", "fill", Color),
+                ("stroke", "stroke", Stroke),
+                ("corner_radius", "corner_radius", Float),
+                ("shadow", "shadow", Shadow),
+                ("padding", "padding", Size),
+                ("margin", "margin", Size),
+                ("fill_width", "width", Fill),
+                ("width", "width", Sizing),
+                ("fill_height", "height", Fill),
+                ("height", "height", Sizing),
+                ("min_size", "min_size", Size),
+                ("max_size", "max_size", Size),
+                ("clip", "clip", Bool),
+            ]
+        };
+    }
+    const REFERENCE_LINE: [(&str, &str, Arg); 4] = [
+        ("name", "name", Str),
+        ("color", "color", Color),
+        ("width", "width", Float),
+        ("style", "style", LineStyle),
+    ];
     match kind {
         WidgetKind::Label => &[
             ("no_wrap", "no_wrap", Flag),
@@ -130,7 +170,13 @@ pub(crate) fn builder_methods(kind: WidgetKind) -> &'static [(&'static str, &'st
             FRAME[3],
             ("selected_text", "", Ignore),
         ],
-        WidgetKind::Grid => &[("striped", "striped", Bool), ("spacing", "spacing", Size)],
+        WidgetKind::Grid => boxed!(
+            ("striped", "striped", Bool),
+            ("spacing", "spacing", Size),
+            ("columns", "columns", Tracks),
+            ("align_x", "align_x", Variant("StackAlign")),
+            ("align_y", "align_y", Variant("StackAlign")),
+        ),
         WidgetKind::ColorPicker => &[("alpha", "alpha", Bool)],
         WidgetKind::DatePicker => &[("sunday_first", "sunday_first", Bool)],
         WidgetKind::Collapsing => &[
@@ -138,17 +184,19 @@ pub(crate) fn builder_methods(kind: WidgetKind) -> &'static [(&'static str, &'st
             ("text_color", "header_color", Color),
             ("font", "header_font", Font),
         ],
-        WidgetKind::Container => &[
-            FRAME[0],
-            FRAME[1],
-            FRAME[2],
-            ("shadow", "shadow", Shadow),
-            ("inner_margin", "inner_margin", Size),
-            ("outer_margin", "outer_margin", Size),
-            FRAME[3],
+        WidgetKind::Stack => boxed!(
+            ("gap", "gap", Float),
+            ("wrap", "wrap", Bool),
+            ("justify", "justify", Variant("Justify")),
+            ("align", "align", Variant("StackAlign")),
+        ),
+        WidgetKind::StackItem => &[
+            ("grow", "grow", Float),
+            ("shrink", "shrink", Float),
+            ("basis", "basis", Float),
+            ("align", "align", Variant("StackAlign")),
+            ("min_size", "min_size", Size),
             ("max_size", "max_size", Size),
-            ("fill_width", "fill_width", Bool),
-            ("fill_height", "fill_height", Bool),
         ],
         WidgetKind::Panel => &[
             ("resizable", "resizable", Bool),
@@ -163,23 +211,42 @@ pub(crate) fn builder_methods(kind: WidgetKind) -> &'static [(&'static str, &'st
             ("max_width", "max_width", Float),
             ("auto_shrink", "auto_shrink", Bool),
         ],
-        WidgetKind::Flex => &[
-            ("wrap", "wrap", Bool),
-            ("gap", "gap", Float),
-            ("justify", "justify", Variant("FlexJustify")),
-            ("align", "align", Variant("FlexAlign")),
-            ("fill_width", "fill_width", Bool),
-            ("fill_height", "fill_height", Bool),
+        WidgetKind::Plot => &[
+            ("x_axis", "x_label", AxisLabel),
+            ("y_axis", "y_label", AxisLabel),
+            ("legend", "legend", Variant("Corner")),
+            ("crosshair", "crosshair", Bool),
+            ("tooltip", "tooltip", Bool),
+            ("allow_drag", "allow_drag", Bool),
+            ("allow_zoom", "allow_zoom", Bool),
+            ("background", "background", Color),
+            ("width", "width", Float),
+            ("height", "height", Float),
         ],
-        WidgetKind::FlexItem => &[
-            ("grow", "grow", Float),
-            ("shrink", "shrink", Float),
-            ("basis", "basis", Float),
-            ("align", "align", Variant("FlexAlign")),
-            ("min_size", "min_size", Size),
-            ("max_size", "max_size", Size),
+        WidgetKind::PlotLine => &[
+            ("name", "name", Str),
+            ("color", "color", Color),
+            ("width", "width", Float),
+            ("style", "style", LineStyle),
+            ("fill", "fill", Float),
+            ("markers", "markers", Variant("MarkerShape")),
+            ("mark_min_max", "mark_min_max", Bool),
         ],
-        WidgetKind::FlexGrid => &[("gap", "gap", Float)],
+        WidgetKind::PlotPoints => &[
+            ("name", "name", Str),
+            ("color", "color", Color),
+            ("radius", "radius", Float),
+            ("shape", "shape", Variant("MarkerShape")),
+            ("filled", "filled", Bool),
+        ],
+        WidgetKind::PlotHLine | WidgetKind::PlotVLine => &REFERENCE_LINE,
+        WidgetKind::PieChart => &[
+            ("donut", "donut", Float),
+            ("diameter", "diameter", Float),
+            ("percentages", "percentages", Bool),
+            ("legend", "legend", Bool),
+            ("start_angle", "start_angle", Float),
+        ],
         _ => &[],
     }
 }
@@ -204,7 +271,7 @@ mod tests {
                     Arg::Str => spec.kind == PropKind::Text,
                     Arg::Float => matches!(spec.kind, PropKind::Float { .. }),
                     Arg::Int => matches!(spec.kind, PropKind::Int { .. }),
-                    Arg::Bool => spec.kind == PropKind::Bool && spec.init != Init::None,
+                    Arg::Bool => spec.kind == PropKind::Bool,
                     Arg::Flag => spec.kind == PropKind::Bool,
                     Arg::Range => spec.kind == PropKind::Range,
                     Arg::Variant(_) => matches!(spec.kind, PropKind::Choice(_)),
@@ -214,6 +281,13 @@ mod tests {
                     Arg::Color => spec.kind == PropKind::Color,
                     Arg::Size => matches!(spec.kind, PropKind::Size | PropKind::Limit),
                     Arg::Shadow => spec.kind == PropKind::Shadow,
+                    Arg::Sizing | Arg::Fill => spec.kind == PropKind::Sizing,
+                    Arg::Tracks => spec.kind == PropKind::Tracks,
+                    Arg::AxisLabel => spec.kind == PropKind::Text,
+                    Arg::LineStyle => {
+                        spec.kind == PropKind::Choice(crate::kind::LINE_STYLES)
+                            && spec.init != Init::None
+                    }
                     Arg::Stroke => spec.kind == PropKind::Stroke,
                     Arg::Font => spec.kind == PropKind::Font,
                     Arg::Ignore => true,
