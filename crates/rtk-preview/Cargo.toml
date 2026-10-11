@@ -1,0 +1,16 @@
+[package]
+name = "rtk-preview"
+description = "Draws a Rustroke Toolkit document with rustroke (design canvas and live preview)."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+authors.workspace = true
+publish = false
+
+[dependencies]
+rtk-document.workspace = true
+rustroke.workspace = true
+
+[lints]
+workspace = true

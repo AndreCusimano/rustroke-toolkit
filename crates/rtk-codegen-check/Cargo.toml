@@ -1,0 +1,15 @@
+[package]
+name = "rtk-codegen-check"
+description = "Compiles the code generated for the example project, so the generator can't emit invalid rustroke code."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+authors.workspace = true
+publish = false
+
+[dependencies]
+rustroke.workspace = true
+
+[lints]
+workspace = true

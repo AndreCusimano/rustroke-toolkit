@@ -1,0 +1,10 @@
+/target
+.idea/
+.DS_Store
+*.new.png
+
+# Local working documents (not published).
+/CLAUDE.md
+/PLAN.md
+/richieste.md
+/icone.md

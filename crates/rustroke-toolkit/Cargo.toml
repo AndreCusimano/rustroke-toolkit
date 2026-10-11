@@ -1,0 +1,18 @@
+[package]
+name = "rustroke-toolkit"
+description = "Visual designer for rustroke views: drag and drop widgets or write code, both kept in sync."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+authors.workspace = true
+publish = false
+
+[dependencies]
+rtk-document.workspace = true
+rtk-preview.workspace = true
+rustroke.workspace = true
+rfd.workspace = true
+
+[lints]
+workspace = true
