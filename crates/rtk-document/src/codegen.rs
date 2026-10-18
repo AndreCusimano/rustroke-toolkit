@@ -18,7 +18,7 @@ use crate::value::{FieldType, Font, Shadow, Sizing, Track, Value, parse_tracks};
 
 /// The rustroke version the generated code targets (`major.minor`). The
 /// toolkit's own major version changes when this does.
-pub const RUSTROKE_VERSION: &str = "0.20";
+pub const RUSTROKE_VERSION: &str = "0.21";
 
 /// Start of the first line of every generated view file; the parser drops
 /// lines starting with it, whatever toolkit version wrote them.

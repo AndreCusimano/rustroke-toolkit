@@ -6,6 +6,17 @@ targeted rustroke version.
 
 ## [Unreleased]
 
+## [3.0.0] — 2026-10-18
+
+For **rustroke 0.21** (built and tested with 0.21.0).
+
+- Side bars along the window edges show and hide the Widgets, Views,
+  Properties and Code panels; the choice is remembered between runs. The
+  panels keep their widths while hidden.
+- Dialogs can be moved by dragging their title bar (`Modal::movable`).
+- The text column of the palette uses the width rustroke 0.21 assigns to a
+  stack item, so descriptions keep wrapping inside the panel.
+
 ## [2.0.0] — 2026-10-12
 
 For **rustroke 0.20** (built and tested with 0.20.0).
@@ -93,6 +104,7 @@ First version, for **rustroke 0.19** (built and tested with 0.19.0).
 - Projects saved as a folder (`<view>.rs`, `mod.rs`, `rustroke-toolkit.ron`)
   with native folder dialogs; recent projects; unsaved-changes guard.
 
-[Unreleased]: https://github.com/AndreCusimano/rustroke-toolkit/compare/v2.0.0...HEAD
+[Unreleased]: https://github.com/AndreCusimano/rustroke-toolkit/compare/v3.0.0...HEAD
+[3.0.0]: https://github.com/AndreCusimano/rustroke-toolkit/releases/tag/v3.0.0
 [2.0.0]: https://github.com/AndreCusimano/rustroke-toolkit/releases/tag/v2.0.0
 [1.0.0]: https://github.com/AndreCusimano/rustroke-toolkit/releases/tag/v1.0.0

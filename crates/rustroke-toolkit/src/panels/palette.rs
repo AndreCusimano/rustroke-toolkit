@@ -5,7 +5,8 @@
 
 use rtk_document::{Category, WidgetKind};
 use rustroke::{
-    CollapsingHeader, Icon, Id, Label, ScrollArea, SearchField, Sense, Sizing, Stack, TextStyle, Ui,
+    CollapsingHeader, Icon, Id, Label, ScrollArea, SearchField, Sense, Sizing, Stack, StackItem,
+    TextStyle, Ui,
 };
 
 use crate::app::{DragPayload, Toolkit};
@@ -39,11 +40,16 @@ fn item(ui: &mut Ui<'_>, app: &mut Toolkit, icons: &Icons, kind: WidgetKind) {
         // Icon, then name over description, as wide as the panel.
         let row = Stack::row().width(Sizing::Points(width)).show(ui, |ui| {
             ui.add(Icon::new(icons.kind(kind)).size(20.0));
-            Stack::column().gap(1.0).show(ui, |ui| {
-                let name = style.body.clone().weight(600);
-                ui.add(Label::new(spec.name).style(name));
-                let small = TextStyle::proportional(12.0);
-                ui.add(Label::new(spec.description).style(small).color(weak));
+            // The text column takes the rest of the row, so the description
+            // wraps at a stable width (a plain child would size to its own
+            // measured text).
+            ui.stack_item(StackItem::new().grow(1.0), |ui| {
+                Stack::column().gap(1.0).show(ui, |ui| {
+                    let name = style.body.clone().weight(600);
+                    ui.add(Label::new(spec.name).style(name));
+                    let small = TextStyle::proportional(12.0);
+                    ui.add(Label::new(spec.description).style(small).color(weak));
+                });
             });
         });
         // The whole row reacts to clicks (the drag source only drags).

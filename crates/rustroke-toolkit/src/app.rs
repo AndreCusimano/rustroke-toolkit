@@ -59,6 +59,105 @@ pub enum Dialog {
     StaleFiles { dir: PathBuf, files: Vec<PathBuf> },
 }
 
+/// A side panel of the main window.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Section {
+    /// The widget palette.
+    Widgets,
+    /// The views and their component trees.
+    Views,
+    /// The properties of the selection, or of the view.
+    Properties,
+    /// The generated code of the view.
+    Code,
+}
+
+impl Section {
+    /// Every section, in the order they are stored.
+    pub const ALL: [Self; 4] = [Self::Widgets, Self::Views, Self::Properties, Self::Code];
+
+    /// The sections on the left edge, from the edge inwards.
+    pub const LEFT: [Self; 2] = [Self::Widgets, Self::Views];
+
+    /// The sections on the right edge, from the edge inwards.
+    pub const RIGHT: [Self; 2] = [Self::Properties, Self::Code];
+
+    /// The name shown in the interface and read by screen readers.
+    pub fn title(self) -> &'static str {
+        match self {
+            Self::Widgets => "Widgets",
+            Self::Views => "Views",
+            Self::Properties => "Properties",
+            Self::Code => "Code",
+        }
+    }
+
+    /// The key in the saved state.
+    fn key(self) -> &'static str {
+        match self {
+            Self::Widgets => "widgets",
+            Self::Views => "views",
+            Self::Properties => "properties",
+            Self::Code => "code",
+        }
+    }
+
+    fn index(self) -> usize {
+        match self {
+            Self::Widgets => 0,
+            Self::Views => 1,
+            Self::Properties => 2,
+            Self::Code => 3,
+        }
+    }
+}
+
+/// Which side panels are open.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct Sections {
+    open: [bool; 4],
+}
+
+impl Default for Sections {
+    fn default() -> Self {
+        Self { open: [true; 4] }
+    }
+}
+
+impl Sections {
+    /// Whether `section` is open.
+    pub fn is_open(&self, section: Section) -> bool {
+        self.open[section.index()]
+    }
+
+    /// Shows `section` if it is hidden, hides it if it is shown.
+    pub fn toggle(&mut self, section: Section) {
+        let open = &mut self.open[section.index()];
+        *open = !*open;
+    }
+
+    /// The closed sections, as written in the saved state.
+    fn stored(&self) -> String {
+        Section::ALL
+            .iter()
+            .filter(|section| !self.is_open(**section))
+            .map(|section| section.key())
+            .collect::<Vec<_>>()
+            .join(",")
+    }
+
+    /// Reads the saved state; missing and unknown sections are open.
+    fn parse(stored: &str) -> Self {
+        let mut sections = Self::default();
+        for key in stored.split(',') {
+            if let Some(section) = Section::ALL.into_iter().find(|s| s.key() == key) {
+                sections.open[section.index()] = false;
+            }
+        }
+        sections
+    }
+}
+
 /// The whole application.
 #[derive(Debug)]
 pub struct Toolkit {
@@ -86,6 +185,8 @@ pub struct Toolkit {
     pub properties: panels::properties::PropertiesPanel,
     /// The widget palette.
     pub palette: panels::palette::PalettePanel,
+    /// Which side panels are open.
+    pub sections: Sections,
     /// Open dialog.
     pub dialog: Option<Dialog>,
     /// Message in the status bar.
@@ -144,6 +245,7 @@ impl Toolkit {
             code: panels::code::CodePanel::default(),
             properties: panels::properties::PropertiesPanel::default(),
             palette: panels::palette::PalettePanel::default(),
+            sections: Sections::default(),
             dialog: None,
             status: "Ready".to_owned(),
             dark: true,
@@ -515,6 +617,9 @@ impl Toolkit {
 /// Key of the recent projects in the saved state (one path per line).
 const RECENT_KEY: &str = "recent_projects";
 
+/// Key of the closed side panels in the saved state (comma separated).
+const SECTIONS_KEY: &str = "closed_sections";
+
 impl Toolkit {
     /// Reads and writes the state kept between runs.
     fn persist(&mut self, frame: &mut Frame<'_>) {
@@ -528,6 +633,7 @@ impl Toolkit {
                 .map(PathBuf::from)
                 .collect();
             self.dark = frame.value("dark_theme") != Some("false");
+            self.sections = Sections::parse(frame.value(SECTIONS_KEY).unwrap_or(""));
             // Reopen the last project, if it still opens.
             if let Some(dir) = self.recent.first().cloned()
                 && rtk_document::project::load_project(&dir).is_ok()
@@ -547,6 +653,10 @@ impl Toolkit {
         let dark = if self.dark { "true" } else { "false" };
         if frame.value("dark_theme") != Some(dark) {
             frame.set_value("dark_theme", dark);
+        }
+        let sections = self.sections.stored();
+        if frame.value(SECTIONS_KEY) != Some(sections.as_str()) {
+            frame.set_value(SECTIONS_KEY, &sections);
         }
     }
 }
@@ -587,31 +697,59 @@ impl App for Toolkit {
 
         Panel::top("menu").show(frame, |ui| panels::toolbar::show(ui, self));
         Panel::bottom("status").show(frame, |ui| panels::status::show(ui, self));
-        Panel::left("palette")
-            .default_size(250.0)
-            .resizable(true)
-            .min_size(180.0)
-            .max_size(420.0)
-            .show(frame, |ui| panels::palette::show(ui, self));
-        Panel::left("views")
-            .default_size(240.0)
-            .resizable(true)
-            .min_size(180.0)
-            .max_size(420.0)
-            .show(frame, |ui| panels::views::show(ui, self));
+        // The rails stay at the window edges and show or hide the panels
+        // inside them.
+        Panel::left("rail left")
+            .default_size(32.0)
+            .resizable(false)
+            .min_size(32.0)
+            .max_size(32.0)
+            .margin(0.0)
+            .show(frame, |ui| {
+                panels::rail::show(ui, self, &Section::LEFT);
+            });
+        if self.sections.is_open(Section::Widgets) {
+            Panel::left("palette")
+                .default_size(240.0)
+                .resizable(true)
+                .min_size(180.0)
+                .max_size(420.0)
+                .show(frame, |ui| panels::palette::show(ui, self));
+        }
+        if self.sections.is_open(Section::Views) {
+            Panel::left("views")
+                .default_size(240.0)
+                .resizable(true)
+                .min_size(180.0)
+                .max_size(420.0)
+                .show(frame, |ui| panels::views::show(ui, self));
+        }
+        Panel::right("rail right")
+            .default_size(32.0)
+            .resizable(false)
+            .min_size(32.0)
+            .max_size(32.0)
+            .margin(0.0)
+            .show(frame, |ui| {
+                panels::rail::show(ui, self, &Section::RIGHT);
+            });
         let now = frame.time.as_secs_f64();
-        Panel::right("code")
-            .default_size(460.0)
-            .resizable(true)
-            .min_size(280.0)
-            .max_size(900.0)
-            .show(frame, |ui| panels::code::show(ui, self, now));
-        Panel::right("properties")
-            .default_size(300.0)
-            .resizable(true)
-            .min_size(240.0)
-            .max_size(520.0)
-            .show(frame, |ui| panels::properties::show(ui, self));
+        if self.sections.is_open(Section::Code) {
+            Panel::right("code")
+                .default_size(440.0)
+                .resizable(true)
+                .min_size(280.0)
+                .max_size(900.0)
+                .show(frame, |ui| panels::code::show(ui, self, now));
+        }
+        if self.sections.is_open(Section::Properties) {
+            Panel::right("properties")
+                .default_size(280.0)
+                .resizable(true)
+                .min_size(240.0)
+                .max_size(520.0)
+                .show(frame, |ui| panels::properties::show(ui, self));
+        }
         // The canvas fills the central area edge to edge.
         CentralPanel::default()
             .margin(0.0)

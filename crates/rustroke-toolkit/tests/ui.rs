@@ -3,6 +3,7 @@
 use rtk_document::{WidgetKind, sample_project};
 use rustroke::testing::Harness;
 use rustroke_toolkit::Toolkit;
+use rustroke_toolkit::app::Section;
 
 fn harness() -> Harness {
     Harness::with_size(1500.0, 900.0)
@@ -62,6 +63,72 @@ fn screenshot() {
     settle(&mut harness, &mut app);
     let shot = harness.render_software();
     shot.save_png(dir.join("toolkit-search.png")).unwrap();
+
+    // Two panels closed: their buttons stay in the side rails.
+    assert!(harness.click(&mut app, "Widgets panel"));
+    assert!(harness.click(&mut app, "Code panel"));
+    settle(&mut harness, &mut app);
+    let shot = harness.render_software();
+    shot.save_png(dir.join("toolkit-sections.png")).unwrap();
+}
+
+#[test]
+fn side_bars_show_and_hide_the_panels() {
+    let mut app = Toolkit::new(sample_project());
+    let mut harness = harness();
+    settle(&mut harness, &mut app);
+
+    // Every section starts open, with its button in a rail.
+    for section in Section::ALL {
+        assert!(app.sections.is_open(section));
+        assert!(
+            harness
+                .find(&format!("{} panel", section.title()))
+                .is_some()
+        );
+    }
+    assert!(harness.find("Search widgets").is_some());
+    assert!(harness.find("Views").is_some());
+    assert!(harness.find("Properties").is_some());
+    assert!(harness.find("View code").is_some());
+
+    // Closing a section removes its content but keeps its button and the
+    // other section on that side.
+    assert!(harness.click(&mut app, "Widgets panel"));
+    settle(&mut harness, &mut app);
+    assert!(!app.sections.is_open(Section::Widgets));
+    assert!(harness.find("Search widgets").is_none());
+    assert!(harness.find("Views").is_some());
+
+    assert!(harness.click(&mut app, "Views panel"));
+    settle(&mut harness, &mut app);
+    assert!(harness.find("Views").is_none());
+    assert!(harness.find("Search widgets").is_none());
+
+    assert!(harness.click(&mut app, "Properties panel"));
+    settle(&mut harness, &mut app);
+    assert!(harness.find("Properties").is_none());
+    assert!(harness.find("View code").is_some());
+
+    assert!(harness.click(&mut app, "Code panel"));
+    settle(&mut harness, &mut app);
+    assert!(harness.find("View code").is_none());
+
+    // All four buttons stay available, and open the panels again.
+    for section in Section::ALL {
+        assert!(
+            harness
+                .find(&format!("{} panel", section.title()))
+                .is_some()
+        );
+        assert!(harness.click(&mut app, &format!("{} panel", section.title())));
+        settle(&mut harness, &mut app);
+        assert!(app.sections.is_open(section));
+    }
+    assert!(harness.find("Search widgets").is_some());
+    assert!(harness.find("Views").is_some());
+    assert!(harness.find("Properties").is_some());
+    assert!(harness.find("View code").is_some());
 }
 
 #[test]

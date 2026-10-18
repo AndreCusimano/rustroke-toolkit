@@ -43,7 +43,7 @@ icons! {
     layout_vertical_centered,
     menu_buttons, menu_code, menu_containers, menu_edit, menu_input, menu_text, menu_values,
     mode_design, mode_preview,
-    panel_code, panel_properties, panel_views,
+    panel_code, panel_properties, panel_views, panel_widgets,
     project, project_new, project_open, project_open_recent, project_save, project_save_as,
     prop_binding, prop_conflict, prop_field_written,
     status_info, status_saved, status_unsaved, status_warning,
